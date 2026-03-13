@@ -1,1114 +1,2480 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
-import * as faceapi from "@vladmandic/face-api";
+import { useState, useEffect } from "react";
+import {
+  ArrowLeft, Download, Clock, Check,
+  ChevronDown, ChevronUp, Home, Dumbbell,
+  RefreshCw, Target, BookOpen, Layers, Package,
+  Thermometer, Wind, Star, AlertCircle
+} from "lucide-react";
 
-type AppPage = "landing" | "form" | "analysis" | "results";
+// ═══════════════════════════════════════════════════════
+// TYPES & DATA (inlined from programs.ts)
+// ═══════════════════════════════════════════════════════
 
-interface LookmaxScore {
-  symmetry: number; facialThirds: number; jawlineScore: number;
-  eyeScore: number; lipScore: number; skinScore: number;
-  canthalTilt: number; overall: number; potential: number;
-  landmarks?: faceapi.Point[];
+interface ProgressionStep {
+  label: string;
+  emoji: string;
+  hold?: string;
+  active?: boolean;
 }
-interface Advice {
-  priority: number; category: string; icon: string; title: string;
-  description: string; scoreGain: string; timeline: string;
-  difficulty: "Facile"|"Moyen"|"Difficile"; femaleOnly?: boolean;
-}
-interface PSLBand { min:number; max:number; label:string; color:string; topPercent:string; emoji:string; }
 
-const PSL_BANDS: PSLBand[] = [
-  { min:1.0, max:3.9, label:"En Dessous",      color:"#ef4444", topPercent:"Bas 30%",  emoji:"😔" },
-  { min:4.0, max:5.4, label:"Dans la Moyenne",  color:"#f97316", topPercent:"50%",      emoji:"😐" },
-  { min:5.5, max:6.9, label:"Au-Dessus",         color:"#eab308", topPercent:"Top 40%", emoji:"🙂" },
-  { min:7.0, max:8.2, label:"Séduisant·e",       color:"#22c55e", topPercent:"Top 25%", emoji:"😍" },
-  { min:8.3, max:8.9, label:"Très Attrayant·e",  color:"#10b981", topPercent:"Top 15%", emoji:"🔥" },
-  { min:9.0, max:9.4, label:"Élite",             color:"#06b6d4", topPercent:"Top 5%",  emoji:"⭐" },
-  { min:9.5, max:9.8, label:"Exceptionnel·le",   color:"#6366f1", topPercent:"Top 2%",  emoji:"💎" },
-  { min:9.9, max:10,  label:"Divin·e",           color:"#a855f7", topPercent:"Top 1%",  emoji:"👑" },
+interface Exercise {
+  title: string;
+  sets: string;
+  reps: string;
+  rest: string;
+  cues: string[];
+  proTip: string;
+  progression?: ProgressionStep[];
+  intensity: string;
+}
+
+interface Phase {
+  name: string;
+  tag: string;
+  duration: string;
+  icon: string;
+  description: string;
+  exercises: Exercise[];
+}
+
+interface WarmupExercise {
+  name: string;
+  duration: string;
+  notes: string;
+}
+
+interface CooldownExercise {
+  name: string;
+  duration: string;
+  notes: string;
+}
+
+interface Program {
+  id: string;
+  title: string;
+  subtitle: string;
+  tagline: string;
+  level: string;
+  levelColor: string;
+  category: "skill" | "hybrid" | "hypertrophy" | "bundle";
+  categoryGroup: "STRENGTH & SKILLS" | "HYBRID" | "HYPERTROPHY" | "BUNDLE";
+  price: string;
+  originalPrice?: string;
+  icon: string;
+  glowColor: string;
+  badge?: string;
+  dualTrack?: boolean;
+  trackLabels?: [string, string];
+  goals: string[];
+  mindset: string;
+  weekStructure: string;
+  warmup: WarmupExercise[];
+  phases: Phase[];
+  gymPhases?: Phase[];
+  cooldown: CooldownExercise[];
+  benefits: string[];
+  bundlePrograms?: Program[];
+  stripeUrl?: string;
+}
+
+// ─── SHARED DATA ──────────────────────────────────────────────────────────────
+
+const sharedWarmup: WarmupExercise[] = [
+  { name: "Wrist Circles & Flexor Stretch", duration: "2 min", notes: "Both directions, 10 reps each way. Critical for planche longevity." },
+  { name: "Shoulder CARs (Controlled Articular Rotations)", duration: "90s each side", notes: "Slow, full-range motion. Feel every degree of the joint." },
+  { name: "Dead Hang + Scapular Pulls", duration: "3×20s", notes: "Engage lats, then actively depress and retract scapulas." },
+  { name: "Pike Compression Hold", duration: "3×15s", notes: "Seated, push legs down with straight arms. Activate hip flexors." },
+  { name: "Planche Lean Warm-up (30% effort)", duration: "3×5s", notes: "Just activate the pattern — do NOT push hard here." },
 ];
-function getBand(s:number):PSLBand { return PSL_BANDS.find(b=>s>=b.min&&s<=b.max)||PSL_BANDS[0]; }
 
-const DIST_DATA = [
-  {label:"1–4", men:8,  women:7 }, {label:"4–5", men:20, women:20},
-  {label:"5–6", men:28, women:28}, {label:"6–7", men:22, women:22},
-  {label:"7–8", men:13, women:13}, {label:"8–8.3",men:5,  women:6 },
-  {label:"8.3+",men:3,  women:3 }, {label:"9.5+", men:1,  women:1 },
+const sharedCooldown: CooldownExercise[] = [
+  { name: "Wrist Extensor Stretch", duration: "2 min", notes: "Knuckles on floor, gently lean back. Hold 30s, release, repeat." },
+  { name: "Doorframe Chest Opener", duration: "90s", notes: "Arms at 90°. Gently press chest forward. Breathe into the stretch." },
+  { name: "Child's Pose with Lat Stretch", duration: "2 min", notes: "Walk hands to each side. Full spinal decompression." },
+  { name: "Supine Shoulder External Rotation", duration: "2 min each", notes: "Lying down, arm at 90°. Slowly lower forearm toward floor." },
+  { name: "Diaphragmatic Breathing", duration: "3 min", notes: "4s inhale, 4s hold, 6s exhale. Activates parasympathetic recovery." },
 ];
 
-const REVIEWS = [
-  {name:"Lucas M.",  age:24, score:"8.2", avatar:"LM", color:"#6366f1", stars:5, text:"Depuis que j'applique les conseils, les gens me regardent différemment dans la rue. En 3 mois, j'ai changé de catégorie sociale."},
-  {name:"Sarah K.",  age:21, score:"7.4", avatar:"SK", color:"#ec4899", stars:5, text:"Passée de 5.8 à 7.4 en 2 mois. Mon ex m'a recontactée, 3× plus de matchs. PSLScore a changé ma vie."},
-  {name:"Antoine D.",age:27, score:"6.9", avatar:"AD", color:"#06b6d4", stars:4, text:"Mon chef m'a proposé une promotion après que j'ai commencé à m'occuper de mon physique. L'effet de halo est 100% réel."},
-  {name:"Emma R.",   age:19, score:"8.1", avatar:"ER", color:"#a855f7", stars:5, text:"On m'a demandé si j'étais mannequin la semaine dernière. 4 mois de routine et les gens font vraiment la différence."},
-  {name:"Maxime L.", age:23, score:"7.2", avatar:"ML", color:"#f97316", stars:5, text:"Perdu 11kg, passé de 5.1 à 7.2. Mes amis pensaient que j'avais fait une op. Non — juste les conseils appliqués à la lettre."},
-  {name:"Inès B.",   age:22, score:"8.5", avatar:"IB", color:"#10b981", stars:5, text:"Fox eye + contouring + skincare. Résultats irréels. Je me reconnais à peine dans le miroir — en bien."},
-  {name:"Thomas G.", age:26, score:"6.4", avatar:"TG", color:"#eab308", stars:4, text:"J'étais sceptique. Ma mâchoire est tellement définie que des inconnus pensent que j'ai fait de la chirurgie."},
-  {name:"Camille V.",age:20, score:"8.8", avatar:"CV", color:"#22c55e", stars:5, text:"Les filles me regardent dans la rue maintenant. Ça n'arrivait jamais avant. Le mewing + la routine a tout changé."},
+const leverCooldown: CooldownExercise[] = [
+  { name: "Thoracic Spine Foam Roll", duration: "3 min", notes: "Roll from T1 to T12 slowly. Pause on tender spots for 20s." },
+  { name: "Lat Hang Stretch", duration: "2×30s", notes: "Hang from bar, slightly tuck one shoulder to feel the lat decompressing." },
+  { name: "Bicep & Forearm Wall Stretch", duration: "90s each", notes: "Palm on wall, fingers pointing down. Gently turn away." },
+  { name: "Prone Back Extension (Cobra)", duration: "2 min", notes: "Elbows under shoulders. Let the spine passively extend. No forcing." },
+  { name: "Deep Breathing + Mental Debrief", duration: "3 min", notes: "Visualize your best rep. Reinforce the motor pattern while calm." },
 ];
 
-const RIGHT_ARGS = [
-  {icon:"🧠", title:"L'Effet de Halo", sub:"Psychologie prouvée", color:"#6366f1",
-   text:"Les personnes attractives sont jugées plus intelligentes et fiables (Thorndike, 1920). Ce biais façonne chaque interaction."},
-  {icon:"💼", title:"+12% de salaire", sub:"Étude économétrique", color:"#22c55e",
-   text:"Hamermesh & Biddle (1994) : les personnes attractives gagnent 12% de plus sur toute leur carrière. Le physique est un capital économique réel."},
-  {icon:"💕", title:"Filtre n°1 en rencontres", sub:"Walster et al., 1966", color:"#ec4899",
-   text:"L'attractivité est le prédicteur n°1 de l'intérêt initial. Avant la personnalité, avant le statut : le visage."},
-  {icon:"📊", title:"Notre Échelle PSL", sub:"Basée sur la science", color:"#06b6d4",
-   text:"Calibrée sur 68 landmarks, symétrie (Rhodes 2006), tiers faciaux (Marquardt 2002), canthal tilt. Pas une opinion — de la géométrie."},
-  {icon:"⚡", title:"Résultats en 72h", sub:"Conseils à effet rapide", color:"#f97316",
-   text:"Posture, hydratation, rétention d'eau — des effets visibles en moins de 3 jours. Une transformation complète en 2–4 semaines."},
-  {icon:"🔬", title:"100% science-based", sub:"Études publiées", color:"#eab308",
-   text:"Chaque critère correspond à un marqueur évolutif réel. Symétrie = santé génétique. Tiers faciaux = développement osseux optimal."},
-];
+// ─── PLANCHE FOUNDATION ───────────────────────────────────────────────────────
 
-// ─── ADVICE ENGINE ────────────────────────────────────────────────────────────
-function generateAdvice(scores:LookmaxScore, gender:string, age:number):Advice[] {
-  const isFemale = gender==="Femme"; const all:Advice[]=[];
-  if(scores.jawlineScore<70){
-    all.push({priority:1,category:"Corps",icon:"⚡",title:"Perdre du gras facial — transformation la plus rapide",
-      description:`Le visage perd ses graisses en premier lors d'un déficit. Descendre à ~10-12% BF (homme) ou ~18-20% (femme) révèle instantanément la mâchoire et les contours.\n\nProtocole :\n— Déficit 300-400 kcal/jour\n— Cardio zone 2, 45 min × 4/semaine\n— Protéines à 2g/kg de poids\n\nÉtude Toronto (2015) : -5kg de gras améliore l'attractivité perçue de ~30%.`,
-      scoreGain:"+0.8 à +2.0 pts",timeline:"4–8 semaines",difficulty:"Difficile"});
-    all.push({priority:1,category:"Hydratation",icon:"💧",title:"Éliminer la rétention d'eau — visage dégonflé en 72h",
-      description:`La rétention gonfle les joues et masque la définition osseuse.\n\n1. Sodium <2g/jour\n2. Boire 2.5L/jour\n3. Supprimer l'alcool 2 semaines\n4. Dormir sur le dos, tête surélevée\n5. Réduire sucres raffinés`,
-      scoreGain:"+0.3 à +0.8 pt",timeline:"72h–2 semaines",difficulty:"Facile"});
-  }
-  all.push({priority:1,category:"Posture",icon:"🦴",title:"Corriger la posture — jawline immédiat dès aujourd'hui",
-    description:`La forward head posture compresse le cou, crée un double menton et détruit le jawline.\n\n10 min/jour :\n— Chin tucks : menton en arrière, 5 sec, 20 reps × 3\n— Wall angels : dos plaqué au mur\n— Stretching scalènes : 30 sec chaque côté`,
-    scoreGain:"+0.5 à +1.2 pts",timeline:"Effet immédiat + 4–8 semaines",difficulty:"Facile"});
-  all.push({priority:2,category:"Exercices faciaux",icon:"🏋️",title:"Mewing — remodeler la structure sur le long terme",
-    description:`Langue entière contre le palais, dents légèrement en contact, respiration nasale permanente. Résultats progressifs mais durables.`,
-    scoreGain:"+0.5 à +1.5 pts",timeline:"6–24 mois",difficulty:"Facile"});
-  all.push({priority:2,category:"Exercices faciaux",icon:"💪",title:"Chewing dur — développer les masséters",
-    description:`Falim gum (5€/100 pièces) ou Mastic grec. Débuter 10-15 min/jour, monter à 30-45 min/jour. Stopper si douleurs ATM.`,
-    scoreGain:"+0.3 à +0.8 pt",timeline:"3–6 mois",difficulty:"Facile"});
-  all.push({priority:2,category:"Skincare",icon:"✨",title:"Routine skincare AM/PM — actifs scientifiquement prouvés",
-    description:`Matin : CeraVe nettoyant (12€) → Vitamine C The Ordinary (6€) → SPF 50+ La Roche-Posay (20€)\nSoir : Nettoyant → Rétinol 0.2% The Ordinary (6€) 2-3x/semaine → Cerave PM\n\nFink et al. (2006) : texture cutanée = 15% de la perception d'attractivité.`,
-    scoreGain:"+0.3 à +0.8 pt",timeline:"4 semaines (éclat) · 3–6 mois (texture)",difficulty:"Facile"});
-  all.push({priority:3,category:"Sommeil",icon:"😴",title:"Optimiser le sommeil — beauty sleep scientifiquement prouvé",
-    description:`Axelsson et al. (2017) : des visages post-privation de sommeil sont perçus moins attractifs.\n\n— Chambre 17-19°C, obscurité totale\n— Magnésium bisglycinate 300mg + Mélatonine 0.3mg, 30 min avant le coucher\n— Horaire fixe 7j/7`,
-    scoreGain:"+0.3 à +0.5 pt",timeline:"Dès la première nuit (poches)",difficulty:"Moyen"});
-  if(scores.eyeScore<68){
-    all.push({priority:3,category:"Yeux",icon:"👁️",title:"Réduire les cernes et poches sous-oculaires",
-      description:`Immédiat : 2 cuillères froides 5-10 min le matin. Patchs caféine Patchology (20€/5 paires).\nLong terme : The Ordinary Caffeine Solution (7€). Réduire alcool et sodium.`,
-      scoreGain:"+0.2 à +0.5 pt",timeline:"Immédiat (froid) · 6–12 semaines (long terme)",difficulty:"Facile"});
-  }
-  if(isFemale){
-    all.push({priority:2,category:"Maquillage",icon:"👁️",title:"Fox eye — simuler un canthal tilt négatif",
-      description:`Eye-liner du coin interne vers l'extérieur, terminer par un trait vers le haut à 45°. Mascara uniquement sur les cils supérieurs. NYX Epic Ink Liner (11€).`,
-      scoreGain:"+0.4 à +0.9 pt",timeline:"Immédiat",difficulty:"Moyen",femaleOnly:true});
-    all.push({priority:2,category:"Maquillage",icon:"🎨",title:"Contouring — structurer le visage visuellement",
-      description:`Bronzer sur les côtés du visage, highlighter sur les pommettes. Charlotte Tilbury Filmstar (55€) ou NYX H&C (15€).`,
-      scoreGain:"+0.4 à +1.0 pt",timeline:"Immédiat",difficulty:"Moyen",femaleOnly:true});
-    all.push({priority:3,category:"Maquillage",icon:"✨",title:"Blush placement — relever instantanément le visage",
-      description:`Sur les pommettes remontant vers les tempes. Rare Beauty Soft Pinch (22€) ou Elf Halo Glow (11€).`,
-      scoreGain:"+0.2 à +0.5 pt",timeline:"Immédiat",difficulty:"Facile",femaleOnly:true});
-  }
-  all.push({priority:4,category:"Style",icon:"💈",title:isFemale?"Coupe adaptée à ta morphologie":"Coupe et barbe — structurer la mâchoire",
-    description:isFemale?`Ovale : tout fonctionne. Rond : longueur sous le menton, raie sur le côté. Carré : couches douces. Long : frange latérale, volume sur les côtés.`:`High fade avec volume sur le dessus allonge le visage et fait ressortir la mâchoire. Barbe 3-7 jours : même légère, elle définit visuellement le jawline.`,
-    scoreGain:"+0.4 à +1.0 pt",timeline:"Immédiat",difficulty:"Facile"});
-  all.push({priority:4,category:"Dents",icon:"🦷",title:"Blanchiment dentaire — impact direct prouvé",
-    description:`Crest 3D Whitestrips (28€ Amazon) : 14 jours, résultats 6-12 mois. HiSmile LED (70€) pour usage répété. Oral-B électrique + fil dentaire chaque soir.`,
-    scoreGain:"+0.2 à +0.5 pt",timeline:"2–14 jours",difficulty:"Facile"});
-  all.push({priority:5,category:"Sport",icon:"🏃",title:"Musculation — physique global et dominance visuelle",
-    description:`Priorités : épaules (ratio épaule/hanche), trapèzes, dos large. 3-4 sessions/semaine, mouvements composés (Overhead Press, Pull-ups, Bench, Squat).`,
-    scoreGain:"+0.5 à +1.5 pts",timeline:"3–6 mois",difficulty:"Difficile"});
-  return all.sort((a,b)=>a.priority-b.priority);
-}
-
-// ─── HELPERS ─────────────────────────────────────────────────────────────────
-function dist(a:faceapi.Point,b:faceapi.Point){return Math.sqrt((a.x-b.x)**2+(a.y-b.y)**2);}
-function clamp(v:number,min=0,max=100){return Math.min(max,Math.max(min,v));}
-function toScore(ratio:number,ideal:number,tol:number){return clamp(100-(Math.abs(ratio-ideal)/tol)*100);}
-
-async function analyzeFace(img:HTMLImageElement,gender:string,age:number):Promise<LookmaxScore>{
-  const det=await faceapi.detectSingleFace(img,new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceExpressions();
-  if(!det)throw new Error("Aucun visage détecté. Photo de face, bonne lumière, expression neutre.");
-  const pts=det.landmarks.positions;
-  const faceWidth=dist(pts[0],pts[16]);
-  const midX=(pts[0].x+pts[16].x)/2;
-  const leftEyeC={x:(pts[36].x+pts[39].x)/2,y:(pts[36].y+pts[39].y)/2};
-  const rightEyeC={x:(pts[42].x+pts[45].x)/2,y:(pts[42].y+pts[45].y)/2};
-  const eyeSymm=100-clamp((Math.abs(Math.abs(midX-leftEyeC.x)-Math.abs(midX-rightEyeC.x))/faceWidth)*300);
-  const browSymm=100-clamp((Math.abs(pts[19].y-pts[24].y)/faceWidth)*200);
-  const symmetry=eyeSymm*0.6+browSymm*0.4;
-  const browLine=(pts[17].y+pts[26].y)/2;
-  const noseTip=pts[33].y; const chin=pts[8].y;
-  const faceHeight=dist(pts[27],pts[8]);
-  const middle=noseTip-browLine; const lower=chin-noseTip;
-  const facialThirds=toScore(middle/lower,1.0,0.20)*0.5+toScore(middle/faceHeight,0.32,0.07)*0.25+toScore(lower/faceHeight,0.35,0.07)*0.25;
-  const jawWidthMid=dist(pts[4],pts[12]);
-  const jawRatioScore=toScore(jawWidthMid/faceWidth,0.75,0.15);
-  const chinSymScore=100-clamp((Math.abs(dist(pts[7],pts[8])-dist(pts[9],pts[8]))/faceWidth)*400);
-  const jawlineScore=jawRatioScore*0.65+chinSymScore*0.35;
-  const leftEyeW=dist(pts[36],pts[39]); const rightEyeW=dist(pts[42],pts[45]);
-  const avgEyeW=(leftEyeW+rightEyeW)/2;
-  const eyeScore=toScore(avgEyeW/faceWidth,0.20,0.04)*0.40+toScore(dist(pts[39],pts[42])/faceWidth,0.20,0.04)*0.35+(100-clamp((Math.abs(leftEyeW-rightEyeW)/avgEyeW)*300))*0.25;
-  const leftTilt=(pts[36].y-pts[39].y)/faceWidth; const rightTilt=(pts[45].y-pts[42].y)/faceWidth;
-  const canthalTilt=clamp(50+((leftTilt+rightTilt)/2)*600);
-  const upperLipH=dist(pts[51],pts[62]); const lowerLipH=dist(pts[57],pts[66]);
-  const lipScore=toScore(upperLipH/(upperLipH+lowerLipH),0.40,0.08);
-  const skinScore=clamp(det.detection.score*85+10);
-  const raw=symmetry*0.25+facialThirds*0.15+jawlineScore*0.15+eyeScore*0.20+canthalTilt*0.10+lipScore*0.08+skinScore*0.07;
-  const boosted=Math.pow(clamp(raw)/100,0.70)*9.0+1.0;
-  const overall=Math.min(Math.round(boosted*10)/10,10.0);
-  const improvable=[jawlineScore,facialThirds,lipScore,skinScore].sort((a,b)=>a-b);
-  const avgWeak=(improvable[0]+improvable[1])/2;
-  const boost=((100-avgWeak)/100)*1.8;
-  const potential=Math.min(Math.round((overall+Math.max(0.3,boost))*10)/10,10.0);
-  return{symmetry:Math.round(symmetry),facialThirds:Math.round(facialThirds),jawlineScore:Math.round(jawlineScore),eyeScore:Math.round(eyeScore),canthalTilt:Math.round(canthalTilt),lipScore:Math.round(lipScore),skinScore:Math.round(skinScore),overall,potential,landmarks:pts};
-}
-
-// ─── LANDMARK OVERLAY ─────────────────────────────────────────────────────────
-function LandmarkOverlay({imageUrl,landmarks,progress}:{imageUrl:string;landmarks:faceapi.Point[]|null;progress:number}){
-  const canvasRef=useRef<HTMLCanvasElement>(null);
-  useEffect(()=>{
-    const canvas=canvasRef.current; if(!canvas)return;
-    const ctx=canvas.getContext("2d"); if(!ctx)return;
-    const img=new Image(); img.src=imageUrl;
-    img.onload=()=>{
-      canvas.width=img.width; canvas.height=img.height;
-      ctx.drawImage(img,0,0);
-      if(!landmarks)return;
-      const pts=landmarks; const lw=Math.max(1,img.width/320);
-      ctx.lineWidth=lw;
-      const groups:number[][]=[
-        [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16],
-        [17,18,19,20,21],[22,23,24,25,26],
-        [27,28,29,30],[31,32,33,34,35],
-        [36,37,38,39,40,41,36],[42,43,44,45,46,47,42],
-        [48,49,50,51,52,53,54,55,56,57,58,59,48],
-      ];
-      ctx.globalAlpha=Math.min(1,(progress/100)*1.8);
-      groups.forEach(g=>{
-        ctx.beginPath(); ctx.strokeStyle="rgba(99,102,241,0.65)";
-        g.forEach((idx,i)=>i===0?ctx.moveTo(pts[idx].x,pts[idx].y):ctx.lineTo(pts[idx].x,pts[idx].y));
-        ctx.stroke();
-      });
-      ctx.setLineDash([4,5]); ctx.strokeStyle="rgba(165,180,252,0.35)";
-      const browY=(pts[17].y+pts[26].y)/2; const mX=(pts[0].x+pts[16].x)/2;
-      ctx.beginPath();ctx.moveTo(mX,pts[27].y-15);ctx.lineTo(mX,pts[8].y+15);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(pts[17].x-10,browY);ctx.lineTo(pts[26].x+10,browY);ctx.stroke();
-      ctx.beginPath();ctx.moveTo(pts[4].x,pts[4].y);ctx.lineTo(pts[12].x,pts[12].y);ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.fillStyle="rgba(165,180,252,1)";
-      pts.forEach(pt=>{const r=Math.max(1.5,img.width/260);ctx.beginPath();ctx.arc(pt.x,pt.y,r,0,Math.PI*2);ctx.fill();});
-      ctx.fillStyle="rgba(52,211,153,1)";
-      [0,4,8,12,16,27,33,36,39,42,45].forEach(i=>{const r=Math.max(2.5,img.width/160);ctx.beginPath();ctx.arc(pts[i].x,pts[i].y,r,0,Math.PI*2);ctx.fill();});
-      ctx.globalAlpha=1;
-    };
-  },[imageUrl,landmarks,progress]);
-  return <canvas ref={canvasRef} className="w-full h-full object-cover absolute inset-0"/>;
-}
-
-// ─── UI COMPONENTS ────────────────────────────────────────────────────────────
-function PSLGauge({score,potential}:{score:number;potential:number}){
-  const band=getBand(score); const potBand=getBand(potential);
-  const toA=(s:number)=>((s-1.0)/9.0)*180-90;
-  const angle=toA(score); const potAngle=toA(potential);
-  return(
-    <svg viewBox="0 0 240 145" className="w-full max-w-[300px] mx-auto">
-      <defs>
-        <filter id="gn"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-        <filter id="gn2"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
-      </defs>
-      <path d="M 30 115 A 90 90 0 0 1 210 115" fill="none" stroke="#ffffff05" strokeWidth="16" strokeLinecap="round"/>
-      {PSL_BANDS.map((b,i)=>{
-        const sa=((b.min-1.0)/9.0)*180-90; const ea=((b.max-0.03)/9.0)*180-90;
-        const sr=sa*Math.PI/180; const er=ea*Math.PI/180;
-        const x1=120+90*Math.cos(sr); const y1=115+90*Math.sin(sr);
-        const x2=120+90*Math.cos(er); const y2=115+90*Math.sin(er);
-        return <path key={i} d={`M ${x1} ${y1} A 90 90 0 0 1 ${x2} ${y2}`} fill="none" stroke={b.color} strokeWidth="16" strokeLinecap="round" opacity={score>=b.min?1:0.10}/>;
-      })}
-      {potential>score&&<g transform={`rotate(${potAngle},120,115)`} opacity="0.22"><line x1="120" y1="115" x2="120" y2="28" stroke={potBand.color} strokeWidth="2" strokeDasharray="6 4" strokeLinecap="round"/></g>}
-      <g transform={`rotate(${angle},120,115)`} filter="url(#gn2)"><line x1="120" y1="115" x2="120" y2="24" stroke="white" strokeWidth="3.5" strokeLinecap="round"/></g>
-      <circle cx="120" cy="115" r="9" fill="white" filter="url(#gn)"/>
-      <circle cx="120" cy="115" r="4" fill="#060608"/>
-      <text x="120" y="97" textAnchor="middle" fill="white" fontSize="34" fontWeight="900" fontStyle="italic" letterSpacing="-1">{score.toFixed(1)}</text>
-      <text x="120" y="112" textAnchor="middle" fill={band.color} fontSize="8.5" fontWeight="700" letterSpacing="3">{band.label.toUpperCase()}</text>
-    </svg>
-  );
-}
-
-function ScoreBar({label,value,color="#06b6d4"}:{label:string;value:number;color?:string}){
-  return(
-    <div className="space-y-1.5">
-      <div className="flex justify-between">
-        <span className="text-[11px] font-bold text-white/40 uppercase tracking-widest">{label}</span>
-        <span className="text-[11px] font-black" style={{color}}>{value}/100</span>
-      </div>
-      <div className="h-[3px] bg-white/5 rounded-full overflow-hidden">
-        <div className="h-full rounded-full" style={{width:`${value}%`,background:`linear-gradient(90deg,${color}33,${color})`}}/>
-      </div>
-    </div>
-  );
-}
-
-function DistributionChart({score,gender}:{score:number;gender:string}){
-  const isMale=gender==="Homme"; const maxV=28;
-  const getIdx=(s:number)=>{if(s<4)return 0;if(s<5)return 1;if(s<6)return 2;if(s<7)return 3;if(s<8)return 4;if(s<8.3)return 5;if(s<9.5)return 6;return 7;};
-  const activeBar=getIdx(score);
-  const cumPct=DIST_DATA.slice(activeBar).reduce((s,d)=>s+(isMale?d.men:d.women),0);
-  const topPct=Math.min(cumPct,99);
-  const barColors=["#ef4444","#f97316","#eab308","#22c55e","#10b981","#06b6d4","#6366f1","#a855f7"];
-  return(
-    <div className="p-5 bg-white/[0.022] border border-white/[0.05] rounded-2xl">
-      <div className="flex items-center justify-between mb-1">
-        <h3 className="text-[9px] font-black text-white/25 uppercase tracking-widest">Répartition PSL</h3>
-        <span className="text-[8px] font-bold text-white/18 uppercase">{gender}s</span>
-      </div>
-      <p className="text-xs text-white/50 mb-4">Top <span className="font-black text-white">{topPct}%</span> des {gender==="Homme"?"hommes":"femmes"}</p>
-      <div className="flex items-end gap-1 h-16 mb-1">
-        {DIST_DATA.map((d,i)=>{
-          const val=isMale?d.men:d.women; const isActive=i===activeBar;
-          return(
-            <div key={i} className="flex-1 flex flex-col items-center">
-              <div className="w-full rounded-sm relative" style={{height:`${(val/maxV)*56}px`,background:isActive?barColors[i]:`${barColors[i]}20`}}>
-                {isActive&&<div className="absolute -top-4 left-1/2 -translate-x-1/2" style={{width:0,height:0,borderLeft:"4px solid transparent",borderRight:"4px solid transparent",borderBottom:`6px solid ${barColors[i]}`}}/>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      <p className="text-[8px] text-white/18 text-center">{score.toFixed(1)} · {topPct>50?`Mieux que ${100-topPct}%`:`Top ${topPct}%`}</p>
-    </div>
-  );
-}
-
-function DiffBadge({d}:{d:string}){
-  const c:Record<string,string>={Facile:"#22c55e",Moyen:"#eab308",Difficile:"#ef4444"};
-  return <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full border" style={{color:c[d],borderColor:c[d]+"40"}}>{d}</span>;
-}
-function PriorityBadge({p}:{p:number}){
-  const cfg:Record<number,{label:string,c:string}>={1:{label:"Impact Maximal",c:"#ef4444"},2:{label:"Impact Fort",c:"#f97316"},3:{label:"Impact Moyen",c:"#eab308"},4:{label:"Impact Modéré",c:"#84cc16"},5:{label:"Bonus",c:"#22c55e"}};
-  const item=cfg[p]; if(!item)return null;
-  return <span className="text-[8px] font-black px-1.5 py-0.5 rounded-full border" style={{color:item.c,borderColor:item.c+"40",background:item.c+"0a"}}>{item.label}</span>;
-}
-
-const CSS=`
-  @keyframes wiggle{0%,100%{transform:scale(1) rotate(0)}25%{transform:scale(1.2) rotate(-12deg)}75%{transform:scale(1.2) rotate(12deg)}}
-  .wiggle{animation:wiggle 1.8s ease-in-out infinite;display:inline-block;}
-  @keyframes scanline{0%{top:-4px}100%{top:calc(100% + 4px)}}
-  .scanline{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,rgba(99,102,241,0.8),transparent);animation:scanline 1.8s ease-in-out infinite;}
-  @keyframes pdot{0%,100%{opacity:0.3;transform:scale(0.8)}50%{opacity:1;transform:scale(1.2)}}
-  @keyframes shimmer{0%{background-position:-200% 0}100%{background-position:200% 0}}
-  .shimmer{background:linear-gradient(90deg,rgba(255,255,255,0.03) 25%,rgba(255,255,255,0.08) 50%,rgba(255,255,255,0.03) 75%);background-size:200% 100%;animation:shimmer 2s ease-in-out infinite;}
-`;
-
-// ─── AMAZON PRODUCT LINKS PER ADVICE ─────────────────────────────────────────
-const AMAZON_LINKS:Record<string,{label:string;url:string}[]>={
-  "Skincare":[
-    {label:"CeraVe Nettoyant",url:"https://www.amazon.fr/s?k=cerave+nettoyant"},
-    {label:"Vitamine C The Ordinary",url:"https://www.amazon.fr/s?k=the+ordinary+vitamin+c"},
-    {label:"SPF 50+ La Roche-Posay",url:"https://www.amazon.fr/s?k=la+roche+posay+spf+50"},
-    {label:"Rétinol The Ordinary",url:"https://www.amazon.fr/s?k=the+ordinary+retinol"},
+const plancheFoundation: Program = {
+  id: "planche-foundation",
+  title: "Planche Foundation",
+  subtitle: "From Zero to Tuck Planche",
+  tagline: "The first 8 weeks that will define your calisthenics career.",
+  level: "Beginner",
+  levelColor: "#22c55e",
+  category: "skill",
+  categoryGroup: "STRENGTH & SKILLS",
+  price: "27",
+  icon: "🤸",
+  glowColor: "rgba(34,197,94,0.12)",
+  goals: [
+    "Develop bulletproof scapular depression & protraction",
+    "Build shoulder blade control from scratch",
+    "Achieve a clean 5-second tuck planche hold",
+    "Lay the structural foundation for advanced planche variants",
   ],
-  "Yeux":[
-    {label:"Patchs caféine Patchology",url:"https://www.amazon.fr/s?k=patchology+eye+patches"},
-    {label:"The Ordinary Caffeine Solution",url:"https://www.amazon.fr/s?k=the+ordinary+caffeine+solution"},
+  mindset: "The planche is not built in a session — it is carved over months. In these first 8 weeks, your only job is to own every rep, own every second, and build connective tissue strength that will protect you for years. Ego has no place here. Perfect technique over everything.",
+  weekStructure: "3 sessions/week (Mon · Wed · Fri). Each session: 60–75 min. Rest days are training days for your nervous system — sleep, eat, recover.",
+  warmup: [
+    { name: "Wrist Circles & Flexion/Extension", duration: "2 min", notes: "30 reps each direction. This is non-negotiable. Wrists take the most stress." },
+    { name: "Scapular Elevation & Depression", duration: "3×12", notes: "Hanging from bar. Feel the full range — do not shortcut." },
+    { name: "Hollow Body Hold", duration: "3×20s", notes: "Lower back pressed to floor. This is the planche body position." },
+    { name: "Straight-Arm Plank", duration: "3×20s", notes: "Push floor away aggressively. Protract those scapulas." },
+    { name: "Cat-Cow with Protraction Focus", duration: "90s", notes: "On all fours. On 'round', maximize the upper back push." },
   ],
-  "Exercices faciaux":[
-    {label:"Falim Gum (mâchoire)",url:"https://www.amazon.fr/s?k=falim+gum"},
-    {label:"Mastic Grec (chewing)",url:"https://www.amazon.fr/s?k=mastic+grec+chewing+gum"},
+  phases: [
+    {
+      name: "Phase 1 — Structural Foundation",
+      tag: "Weeks 1–3",
+      duration: "3 weeks",
+      icon: "🏗️",
+      description: "Build the connective tissue and neuromuscular patterns. Do not rush. These weeks are the difference between long-term progress and injury.",
+      exercises: [
+        {
+          title: "Scapular Push-Ups",
+          sets: "4",
+          reps: "12 reps",
+          rest: "60s",
+          intensity: "Controlled",
+          cues: [
+            "Start in straight-arm plank",
+            "Let chest drop by pinching scapulas (don't bend elbows)",
+            "Push floor away to 'round' and protract scapulas",
+            "Top position: feel your upper back pushing to the ceiling",
+          ],
+          proTip: "Record from the side. You should see your upper back rising noticeably in the protracted position. If not, you're not protracting enough.",
+          progression: [
+            { label: "Knees", emoji: "🦵", active: false },
+            { label: "Standard", emoji: "📐", active: true },
+            { label: "Elevated Feet", emoji: "⬆️", active: false },
+            { label: "Weighted", emoji: "🏋️", active: false },
+          ],
+        },
+        {
+          title: "Planche Lean (Rings or Parallettes)",
+          sets: "5",
+          reps: "5×3s hold",
+          rest: "90s",
+          intensity: "Technical",
+          cues: [
+            "Shoulders must be anterior to wrists — this is mandatory",
+            "Posterior pelvic tilt (tuck your tailbone)",
+            "Arms stay locked at 0° — any bend means less lean",
+            "Gaze: floor 10 inches in front",
+          ],
+          proTip: "The lean angle is everything. Use a mirror or camera. Your shoulders should be 10–15cm in front of your hands by Week 3.",
+          progression: [
+            { label: "Slight Lean", emoji: "📏", active: true },
+            { label: "45° Lean", emoji: "📐", active: false },
+            { label: "Full Lean", emoji: "⚡", active: false },
+          ],
+        },
+        {
+          title: "Pseudo Planche Push-Ups",
+          sets: "4",
+          reps: "8 reps",
+          rest: "90s",
+          intensity: "Moderate",
+          cues: [
+            "Hands turned out 45° or more",
+            "Weight forward over hands — shoulders above wrists",
+            "Lower chest to floor slowly (3-second negative)",
+            "Push back up while maintaining forward lean",
+          ],
+          proTip: "The further you rotate hands and lean forward, the harder this becomes. Start conservative. Quality reps only.",
+        },
+      ],
+    },
+    {
+      name: "Phase 2 — Tuck Compression",
+      tag: "Weeks 4–6",
+      duration: "3 weeks",
+      icon: "🔧",
+      description: "Now we introduce the actual tuck position. Hip flexor strength and compression are the limiting factors for most athletes at this stage.",
+      exercises: [
+        {
+          title: "Tuck L-Sit Progression",
+          sets: "5",
+          reps: "5×4s hold",
+          rest: "90s",
+          intensity: "Max Effort",
+          cues: [
+            "On parallettes or floor (parallel bars preferred)",
+            "Pull knees as close to chest as possible",
+            "Push down hard — think 'anti-gravity'",
+            "Keep arms straight and locked — no bending",
+          ],
+          proTip: "This is 80% hip flexor strength. If you struggle, add 3 sets of 12 lying leg raises to your accessory work daily.",
+          progression: [
+            { label: "Foot-Assisted", emoji: "👣", active: false },
+            { label: "Tuck L-Sit", emoji: "🧘", active: true },
+            { label: "Half-Lay", emoji: "📐", active: false },
+            { label: "L-Sit", emoji: "🎯", active: false },
+          ],
+        },
+        {
+          title: "Tuck Planche Hold",
+          sets: "6",
+          reps: "6×3–5s",
+          rest: "2 min",
+          intensity: "Maximum",
+          cues: [
+            "From tuck L-sit, lean forward until feet lift",
+            "Hips parallel to floor — do not let them sag",
+            "Maximize scapular protraction throughout",
+            "Every second counts — this is CNS-intensive",
+          ],
+          proTip: "Film every session from the side. You want hips level with shoulders. The moment hips drop, the hold ends — don't count dropped reps.",
+          progression: [
+            { label: "Assisted", emoji: "🤝", active: false },
+            { label: "Tuck Planche", emoji: "🤸", active: true },
+            { label: "Adv. Tuck", emoji: "⚡", active: false },
+            { label: "Straddle", emoji: "🌟", active: false },
+          ],
+        },
+        {
+          title: "Tuck Planche Push-Ups",
+          sets: "4",
+          reps: "4×2–3 reps",
+          rest: "2 min",
+          intensity: "High",
+          cues: [
+            "Start in tuck planche hold",
+            "Lower body 5cm while maintaining lean and tuck",
+            "Press back to start — every rep is a victory",
+            "Zero tolerance for hip sag",
+          ],
+          proTip: "Even 1 clean rep is better than 5 ugly ones. This exercise builds the specific strength no other movement can replicate.",
+        },
+      ],
+    },
+    {
+      name: "Phase 3 — Integration & Testing",
+      tag: "Weeks 7–8",
+      duration: "2 weeks",
+      icon: "🚀",
+      description: "Peak your strength and test your tuck planche max hold. This week is about expression of what you've built, not adding new stimulus.",
+      exercises: [
+        {
+          title: "Max Tuck Planche Hold Test",
+          sets: "3",
+          reps: "Max hold (target: 5+ sec)",
+          rest: "3 min",
+          intensity: "Max Effort",
+          cues: [
+            "Full warm-up completed",
+            "Film every attempt",
+            "Rest fully between attempts — this is a strength test",
+            "Celebrate progress: even 3s is elite for 8 weeks",
+          ],
+          proTip: "Comparing Week 1 to Week 8 is the most motivating thing you'll ever see. Save both videos side by side.",
+        },
+        {
+          title: "Planche Lean Endurance",
+          sets: "5",
+          reps: "5×8s",
+          rest: "90s",
+          intensity: "High Volume",
+          cues: [
+            "Max lean angle you can maintain",
+            "Focus on holding the protraction throughout",
+            "Breathe — don't hold your breath",
+          ],
+          proTip: "Building endurance in the lean builds the tendon and joint resilience that protects you as you progress to harder variants.",
+        },
+      ],
+    },
   ],
-  "Dents":[
-    {label:"Crest 3D Whitestrips",url:"https://www.amazon.fr/s?k=crest+3d+whitestrips"},
-    {label:"Oral-B Électrique",url:"https://www.amazon.fr/s?k=oral+b+electrique"},
+  cooldown: sharedCooldown,
+  benefits: [
+    "5-second tuck planche hold by Week 8",
+    "Bulletproof wrist & shoulder preparation",
+    "Correct motor patterns for all future planche work",
   ],
-  "Sommeil":[
-    {label:"Magnésium Bisglycinate",url:"https://www.amazon.fr/s?k=magnesium+bisglycinate"},
-    {label:"Mélatonine 0.3mg",url:"https://www.amazon.fr/s?k=melatonine+0.3mg"},
-  ],
-  "Maquillage":[
-    {label:"NYX Epic Ink Liner",url:"https://www.amazon.fr/s?k=nyx+epic+ink+liner"},
-    {label:"Rare Beauty Blush",url:"https://www.amazon.fr/s?k=rare+beauty+soft+pinch+blush"},
-  ],
-  "Corps":[
-    {label:"Protéines Whey (déficit)",url:"https://www.amazon.fr/s?k=whey+proteine"},
-  ],
-  "Sport":[
-    {label:"Bandes de résistance",url:"https://www.amazon.fr/s?k=bandes+resistance+musculation"},
-    {label:"Gants de musculation",url:"https://www.amazon.fr/s?k=gants+musculation"},
-  ],
-  "Posture":[
-    {label:"Correcteur de posture",url:"https://www.amazon.fr/s?k=correcteur+posture+dos"},
-  ],
-  "Style":[
-    {label:"Tondeuse barbe Philips",url:"https://www.amazon.fr/s?k=tondeuse+barbe+philips"},
-  ],
+  stripeUrl: "https://buy.stripe.com/5kQeVf0Ix3Yd0EPgZT3ZK06",
 };
 
-export default function Home(){
-  const [page,setPage]=useState<AppPage>("landing");
-  const [gender,setGender]=useState<string|null>(null);
-  const [age,setAge]=useState<number|null>(null);
-  const [imageUrl,setImageUrl]=useState<string|null>(null);
-  const [imageEl,setImageEl]=useState<HTMLImageElement|null>(null);
-  const [modelsLoaded,setModelsLoaded]=useState(false);
-  const [loadingModels,setLoadingModels]=useState(false);
-  const [analyzing,setAnalyzing]=useState(false);
-  const [analysisStep,setAnalysisStep]=useState("");
-  const [analysisPhase,setAnalysisPhase]=useState(0);
-  const [progress,setProgress]=useState(0);
-  const [results,setResults]=useState<LookmaxScore|null>(null);
-  const [interimLandmarks,setInterimLandmarks]=useState<faceapi.Point[]|null>(null);
-  const [advice,setAdvice]=useState<Advice[]>([]);
-  const [error,setError]=useState<string|null>(null);
-  const [activeTab,setActiveTab]=useState<"scores"|"potential"|"advice">("scores");
-  const [expandedAdvice,setExpandedAdvice]=useState<number|null>(null);
-  // Offer states: null = no offer selected, "basic" = 2.99 paid, "premium" = 4.99 paid
-  const [unlockedOffer,setUnlockedOffer]=useState<null|"basic"|"premium">(null);
-  // For the upsell: after paying 2.99, can pay +2€ for potential+advice
-  const [unlockedUpsell,setUnlockedUpsell]=useState(false);
+const plancheElite: Program = {
+  id: "planche-elite",
+  title: "Planche Elite",
+  subtitle: "From Straddle to Full Planche",
+  tagline: "The advanced protocol that separates athletes from artists.",
+  level: "Intermediate / Advanced",
+  levelColor: "#f97316",
+  category: "skill",
+  categoryGroup: "STRENGTH & SKILLS",
+  price: "39",
+  icon: "⚡",
+  glowColor: "rgba(249,115,22,0.15)",
+  goals: [
+    "Achieve a clean 3-second straddle planche hold",
+    "Build the strength base for full planche attempts",
+    "Master the advanced tuck → straddle transition",
+    "Develop ring planche stability for elite carryover",
+  ],
+  mindset: "You are no longer a beginner. This is where true separation happens. The athletes who reach this stage and fail are those who let ego push volume before quality. Your job is to be precise, patient, and relentless. The full planche is not a trick — it's a year or more of perfect training distilled into one moment.",
+  weekStructure: "4 sessions/week (Mon · Tue · Thu · Fri). Tue/Fri are accessory & volume days. Mon/Thu are max effort skill days.",
+  warmup: sharedWarmup,
+  phases: [
+    {
+      name: "Phase 1 — Advanced Tuck Mastery",
+      tag: "Weeks 1–3",
+      duration: "3 weeks",
+      icon: "🔩",
+      description: "The advanced tuck (hips extended, legs parallel) is the true gateway to straddle. Own it for 8+ seconds before moving on.",
+      exercises: [
+        {
+          title: "Advanced Tuck Planche Hold",
+          sets: "6",
+          reps: "6×6–8s",
+          rest: "2.5 min",
+          intensity: "Maximum",
+          cues: [
+            "Hips fully extended — thighs parallel to floor",
+            "Knees tucked but hips 180° open",
+            "Lean is aggressive — wrists are heavily loaded",
+            "Squeeze glutes to maintain hip position",
+          ],
+          proTip: "The difference between tuck and advanced tuck is about 2–3× the difficulty. Do not rush. Film from the side every session to measure hip extension.",
+          progression: [
+            { label: "Tuck", emoji: "🤸", active: false },
+            { label: "Adv. Tuck", emoji: "⚡", active: true },
+            { label: "Straddle", emoji: "🌟", active: false },
+            { label: "Full", emoji: "👑", active: false },
+          ],
+        },
+        {
+          title: "Straddle Planche Negatives",
+          sets: "5",
+          reps: "5×4s negative",
+          rest: "3 min",
+          intensity: "High Eccentric",
+          cues: [
+            "Start in straddle planche (use bands or partner if needed)",
+            "Lower hips down over 4 full seconds",
+            "Fight gravity every millimeter",
+            "Use bands to assist the concentric only",
+          ],
+          proTip: "Eccentric strength is your fastest path to concentric planche. The negative builds 3× more specific strength than the hold.",
+        },
+      ],
+    },
+    {
+      name: "Phase 2 — Straddle Development",
+      tag: "Weeks 4–7",
+      duration: "4 weeks",
+      icon: "🌟",
+      description: "The straddle planche is 60-70% of the full planche in terms of difficulty. Own it before even attempting full.",
+      exercises: [
+        {
+          title: "Straddle Planche Hold",
+          sets: "5",
+          reps: "5×3–5s",
+          rest: "3 min",
+          intensity: "Maximum",
+          cues: [
+            "Legs spread to maximum width — the wider, the easier",
+            "Point toes. Squeeze entire lower body",
+            "Shoulder blades in maximum protraction",
+            "Breathe shallow — don't let the exhale collapse your position",
+          ],
+          proTip: "Using parallettes vs floor changes the difficulty significantly. Start on parallettes (more wrist clearance). Graduate to floor.",
+          progression: [
+            { label: "Wide Straddle", emoji: "↔️", active: true },
+            { label: "Mid Straddle", emoji: "📐", active: false },
+            { label: "Narrow Straddle", emoji: "⚡", active: false },
+            { label: "Full Planche", emoji: "👑", active: false },
+          ],
+        },
+        {
+          title: "Straddle Planche Push-Ups",
+          sets: "4",
+          reps: "4×2–4 reps",
+          rest: "3 min",
+          intensity: "Elite",
+          cues: [
+            "One of the hardest exercises in calisthenics",
+            "Maintain straddle throughout the movement",
+            "Lower only 3–5cm — range of motion is minimal at this level",
+            "Even 1 rep is meaningful progress",
+          ],
+          proTip: "Most athletes at this level manage 1–2 partial reps. That is perfectly normal. Do not compare your training to highlight reels.",
+        },
+      ],
+    },
+    {
+      name: "Phase 3 — Full Planche Approach",
+      tag: "Weeks 8–10",
+      duration: "3 weeks",
+      icon: "👑",
+      description: "First true full planche attempts. Use band assistance to feel the position. Your goal is 1 unassisted second.",
+      exercises: [
+        {
+          title: "Banded Full Planche Hold",
+          sets: "5",
+          reps: "5×5s",
+          rest: "3 min",
+          intensity: "Maximum",
+          cues: [
+            "Band around hips provides just enough assistance",
+            "Legs together and fully extended — perfect alignment",
+            "This is a full-body isometric contraction",
+            "Record every attempt. Progress is measured in millimeters.",
+          ],
+          proTip: "Reduce band thickness every 2 weeks as you get stronger. The goal is 3 bands → 2 bands → 1 band → free.",
+          progression: [
+            { label: "3 Bands", emoji: "🟢", active: true },
+            { label: "2 Bands", emoji: "🟡", active: false },
+            { label: "1 Band", emoji: "🟠", active: false },
+            { label: "Free", emoji: "👑", active: false },
+          ],
+        },
+      ],
+    },
+  ],
+  cooldown: sharedCooldown,
+  benefits: [
+    "Straddle planche in 10 weeks",
+    "Ring planche stability",
+    "Full planche approach within 6 months",
+  ],
+  stripeUrl: "https://buy.stripe.com/eVq9AVdvjamB73dcJD3ZK07",
+};
 
+const frontLeverMastery: Program = {
+  id: "front-lever",
+  title: "Front Lever Mastery",
+  subtitle: "Complete Guide to Full Front Lever",
+  tagline: "Build the posterior chain of a gymnast.",
+  level: "All Levels",
+  levelColor: "#3b82f6",
+  category: "skill",
+  categoryGroup: "STRENGTH & SKILLS",
+  price: "29",
+  icon: "🎯",
+  glowColor: "rgba(59,130,246,0.15)",
+  goals: [
+    "Achieve a clean 5-second full front lever hold",
+    "Build elite-level lat and posterior chain strength",
+    "Master the tuck → straddle → full progression",
+    "Develop pulling strength applicable to muscle-ups and rows",
+  ],
+  mindset: "The front lever is the ultimate test of pulling strength and body tension. Unlike the planche, it is achievable for most dedicated athletes within 3–6 months. The key is total body tension — it is not a lat exercise, it's a full-body isometric. Every muscle from your feet to your hands must be engaged simultaneously.",
+  weekStructure: "3 sessions/week (Mon · Wed · Sat). Can be combined with pull day in any program. Front lever work always comes FIRST in the session when fresh.",
+  warmup: [
+    { name: "Band Pull-Aparts", duration: "3×20", notes: "Light band. Targets rear delts and external rotators. Critical for lever shoulder health." },
+    { name: "Scapular Pull-Ups", duration: "3×10", notes: "Dead hang. Without bending arms, depress and retract scapulas. Pause 1s at top." },
+    { name: "Hollow Body Hold", duration: "3×25s", notes: "This IS the front lever body position. Master it here first." },
+    { name: "German Hang (gentle)", duration: "2×20s", notes: "Only if experienced. Opens the shoulder joint for lever positions." },
+    { name: "Inverted Hang", duration: "3×15s", notes: "Pull up and hold horizontal. Feel the lat engagement." },
+  ],
+  phases: [
+    {
+      name: "Phase 1 — Tuck Front Lever",
+      tag: "Weeks 1–4",
+      duration: "4 weeks",
+      icon: "🌱",
+      description: "The foundation. If you cannot hold a tuck front lever for 10 seconds, nothing else matters yet.",
+      exercises: [
+        {
+          title: "Tuck Front Lever Hold",
+          sets: "6",
+          reps: "6×8–10s",
+          rest: "90s",
+          intensity: "High",
+          cues: [
+            "Knees to chest, back perfectly flat — no rounding",
+            "Arms straight — the moment you bend, it's not a lever",
+            "Depress AND retract scapulas simultaneously",
+            "Hips at bar height — not below",
+          ],
+          proTip: "Back flatness is the single most important cue. A rounded back is a compensated lever, not a real one. Film from the side.",
+          progression: [
+            { label: "Tuck", emoji: "🧘", active: true },
+            { label: "Adv. Tuck", emoji: "📐", active: false },
+            { label: "Straddle", emoji: "↔️", active: false },
+            { label: "Full Lever", emoji: "🎯", active: false },
+          ],
+        },
+        {
+          title: "Front Lever Rows (Tuck)",
+          sets: "4",
+          reps: "6 reps",
+          rest: "2 min",
+          intensity: "Strength",
+          cues: [
+            "Start in tuck front lever hang",
+            "Pull bar to chest — maintain tuck throughout",
+            "Slow negative (3 seconds down)",
+            "This is the most strength-building exercise in this program",
+          ],
+          proTip: "If you can do 5+ clean reps, you are ready to progress the lever position. These rows are a stronger signal of readiness than hold time alone.",
+        },
+      ],
+    },
+    {
+      name: "Phase 2 — Advanced Tuck & Straddle",
+      tag: "Weeks 5–8",
+      duration: "4 weeks",
+      icon: "⬆️",
+      description: "Extending the hips changes the lever mechanics dramatically. Take the time you need here — most athletes spend 4–6 weeks.",
+      exercises: [
+        {
+          title: "Advanced Tuck Front Lever",
+          sets: "5",
+          reps: "5×6–8s",
+          rest: "2 min",
+          intensity: "High",
+          cues: [
+            "Hips extended to 180° — thighs parallel to floor",
+            "Knees still bent but body nearly horizontal",
+            "Core engaged like a plank — not just the lats",
+            "Posterior pelvic tilt to prevent hip drop",
+          ],
+          proTip: "Every 2 weeks, try straightening one leg while the other stays tucked (uneven lever). This bridges the gap to straddle effectively.",
+          progression: [
+            { label: "Tuck", emoji: "🧘", active: false },
+            { label: "Adv. Tuck", emoji: "📐", active: true },
+            { label: "1-Leg", emoji: "🦵", active: false },
+            { label: "Straddle", emoji: "↔️", active: false },
+          ],
+        },
+        {
+          title: "Straddle Front Lever Hold",
+          sets: "5",
+          reps: "5×4–6s",
+          rest: "2.5 min",
+          intensity: "Maximum",
+          cues: [
+            "Wide leg split — wider is significantly easier",
+            "Squeeze glutes and point toes",
+            "Fight the pull of gravity with your entire posterior chain",
+            "Eyes looking at ceiling — helps maintain horizontal position",
+          ],
+          proTip: "The straddle front lever is approximately 75% of the difficulty of the full lever. Own 8+ seconds here before attempting full.",
+        },
+      ],
+    },
+    {
+      name: "Phase 3 — Full Front Lever",
+      tag: "Weeks 9–12",
+      duration: "4 weeks",
+      icon: "🎯",
+      description: "The summit. Most athletes will achieve their first 1–3 second full front lever in this phase. Approach it with respect.",
+      exercises: [
+        {
+          title: "Full Front Lever Hold",
+          sets: "5",
+          reps: "5×1–3s (build to 5s)",
+          rest: "3 min",
+          intensity: "Maximum",
+          cues: [
+            "Legs together, toes pointed, body rigid",
+            "Think: 'steel rod from head to toe'",
+            "Active shoulder depression is still required — don't disengage",
+            "The hold lives and dies by your lats and core working as one",
+          ],
+          proTip: "Your first full front lever will likely be a surprise — one rep where everything clicks. Have your camera ready. That moment is worth documenting.",
+          progression: [
+            { label: "Straddle", emoji: "↔️", active: false },
+            { label: "1–2s", emoji: "⏱️", active: true },
+            { label: "3–5s", emoji: "🎯", active: false },
+            { label: "5s+", emoji: "👑", active: false },
+          ],
+        },
+        {
+          title: "Full Front Lever Rows",
+          sets: "4",
+          reps: "3–5 reps",
+          rest: "3 min",
+          intensity: "Elite",
+          cues: [
+            "The single hardest pulling movement in bodyweight training",
+            "Maintain perfect body alignment through full range",
+            "Even 1 rep is a milestone. Record it.",
+          ],
+          proTip: "Elite-level athletes do full front lever rows for 3–5 reps. If you can do this, you are in the top 0.1% of strength athletes worldwide.",
+        },
+      ],
+    },
+  ],
+  cooldown: leverCooldown,
+  benefits: [
+    "Full front lever in 12 weeks",
+    "Elite posterior chain conditioning",
+    "Pulling strength for muscle-ups and advanced rows",
+  ],
+  stripeUrl: "https://buy.stripe.com/8x2dRbaj7fGV0EP6lf3ZK08",
+};
 
-  useEffect(()=>{
-    if(modelsLoaded||loadingModels)return;
-    setLoadingModels(true);
-    const URL="https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model";
-    Promise.all([
-      faceapi.nets.tinyFaceDetector.loadFromUri(URL),
-      faceapi.nets.faceLandmark68Net.loadFromUri(URL),
-      faceapi.nets.faceExpressionNet.loadFromUri(URL),
-    ]).then(()=>{setModelsLoaded(true);setLoadingModels(false);}).catch(()=>setLoadingModels(false));
-  },[]);
+const hybridAthlete: Program = {
+  id: "hybrid-athlete",
+  title: "Hybrid Athlete",
+  subtitle: "Bodyweight Skills + Weighted Lifts",
+  tagline: "The physique of a gymnast. The strength of a powerlifter.",
+  level: "Intermediate",
+  levelColor: "#a855f7",
+  category: "hybrid",
+  categoryGroup: "HYBRID",
+  price: "47",
+  icon: "💪",
+  glowColor: "rgba(168,85,247,0.15)",
+  badge: "BEST-SELLER",
+  dualTrack: true,
+  trackLabels: ["Home Routine", "Gym Routine"],
+  goals: [
+    "Fuse calisthenics skill work with barbell/dumbbell hypertrophy",
+    "Build the 'athlete physique' — functional AND aesthetic",
+    "Progress planche or front lever alongside strength gains",
+    "4 structured training days with intelligent periodization",
+  ],
+  mindset: "The hybrid athlete doesn't choose between skill and strength — they pursue both. This requires more intelligent programming because the two systems can conflict. Skill work comes first, always. Fatigue is the enemy of skill acquisition. Treat your nervous system like the high-performance engine it is.",
+  weekStructure: "4 sessions/week. Day 1 (Upper Skill + Push Strength) · Day 2 (Lower Power + Plyo) · Day 3 (Upper Pull + Lever Work) · Day 4 (Full Body Accessory + Hypertrophy Finish).",
+  warmup: [
+    { name: "Dynamic Wrist Protocol", duration: "3 min", notes: "Circles, push stretches, extension holds. Full protocol for barbell + skill combined load." },
+    { name: "Shoulder Band Circuit", duration: "3×15 each", notes: "Pull-aparts, face pulls, Y-T-W. Primes the rotator cuff for heavy pressing." },
+    { name: "Hollow Body + Arch Hold Alternating", duration: "4×20s each", notes: "Programs the core for both lever and barbell bracing patterns." },
+    { name: "Planche/Lever 30% Activation", duration: "3×4s", notes: "Just activate the pattern. Not a working set — neural priming only." },
+    { name: "Hip Flexor + Hamstring Flow", duration: "4 min", notes: "Lunge matrix into RDL stretch. Prepares for deadlift/squat carryover." },
+  ],
+  phases: [
+    {
+      name: "Block 1 — Skill Priority",
+      tag: "Weeks 1–4",
+      duration: "4 weeks",
+      icon: "🎯",
+      description: "Skills first, strength second. Your CNS is freshest at the start. Never reverse this order.",
+      exercises: [
+        {
+          title: "Planche / Front Lever Skill Work",
+          sets: "6",
+          reps: "6×5s (max quality)",
+          rest: "2.5 min",
+          intensity: "Maximum Skill",
+          cues: [
+            "Choose your skill: Planche OR Lever — not both in same session",
+            "Every rep must be your best — not just completed",
+            "If quality drops, stop the set immediately",
+            "Log every session: position held, seconds, quality rating /10",
+          ],
+          proTip: "Film every skill session from the side. Compare Week 1 to Week 4. The visual feedback is more valuable than any coach cue.",
+        },
+        {
+          title: "Weighted Pull-Ups",
+          sets: "5",
+          reps: "5 reps @ 70–80% 1RM",
+          rest: "2.5 min",
+          intensity: "Strength",
+          cues: [
+            "Add weight via belt, vest, or dumbbell between legs",
+            "Full hang to chin over bar — no kipping",
+            "3-second descent every rep",
+            "Scapular engagement throughout — do not disengage at bottom",
+          ],
+          proTip: "Weighted pull-up strength directly transfers to front lever. If you increase your weighted pull-up max by 20%, your lever will improve measurably.",
+        },
+        {
+          title: "Overhead Press (Barbell or DB)",
+          sets: "4",
+          reps: "6 reps @ 75% 1RM",
+          rest: "2 min",
+          intensity: "Strength",
+          cues: [
+            "Bar starts at collar bone, press in straight vertical line",
+            "Brace core like a planche lean — same tension",
+            "Lock out at top with shoulder blades squeezed",
+            "Controlled descent — 2 seconds down",
+          ],
+          proTip: "The overhead press builds the anterior deltoid strength required for planche lean. These exercises are not separate — they reinforce each other.",
+        },
+      ],
+    },
+    {
+      name: "Block 2 — Hybrid Power",
+      tag: "Weeks 5–8",
+      duration: "4 weeks",
+      icon: "⚡",
+      description: "Increase intensity across both skill and strength work simultaneously. This is where the hybrid athlete starts to emerge.",
+      exercises: [
+        {
+          title: "Muscle-Up to Dip Combination",
+          sets: "5",
+          reps: "3–5 reps (quality)",
+          rest: "3 min",
+          intensity: "Power",
+          cues: [
+            "Explosive pull → transition → controlled dip",
+            "This is a power-skill movement — rest fully",
+            "On rings: more skill transfer, harder stabilization",
+            "On bar: more power output, easier stabilization",
+          ],
+          proTip: "Muscle-ups on rings are arguably the most impressive bodyweight movement for an observer. If you don't have them yet, this program will get you there.",
+        },
+        {
+          title: "Deadlift (Romanian variation)",
+          sets: "4",
+          reps: "5 reps @ 80% 1RM",
+          rest: "2.5 min",
+          intensity: "Heavy",
+          cues: [
+            "Hip hinge — push hips back first",
+            "Bar stays in contact with legs throughout",
+            "Neutral spine maintained — any rounding = stop",
+            "Squeeze glutes at lockout — don't hyperextend",
+          ],
+          proTip: "The RDL builds posterior chain strength that directly translates to front lever holding power. This is not optional — it is synergistic.",
+        },
+      ],
+    },
+  ],
+  gymPhases: [
+    {
+      name: "Gym Track — Block 1 (Strength Foundation)",
+      tag: "Weeks 1–4",
+      duration: "4 weeks",
+      icon: "🏋️",
+      description: "Full equipment available. Prioritize compound movements loaded progressively. Skills still come first.",
+      exercises: [
+        {
+          title: "Barbell Bench Press",
+          sets: "5",
+          reps: "5 reps @ 75% 1RM",
+          rest: "3 min",
+          intensity: "Heavy",
+          cues: [
+            "Arch + retract scapulas — create a stable platform",
+            "Bar touches sternum — not high chest",
+            "Drive feet into floor throughout",
+            "2-second pause at bottom optional for max chest activation",
+          ],
+          proTip: "The bench press and planche lean work the same anterior deltoid angle. Your planche lean will improve as your bench press increases.",
+        },
+        {
+          title: "Weighted Ring Dips",
+          sets: "4",
+          reps: "6 reps",
+          rest: "2.5 min",
+          intensity: "Strength",
+          cues: [
+            "Rings turned out 30° at bottom",
+            "Full range — chest between hands at bottom",
+            "Control the rings — do not let them splay",
+            "Lean forward slightly to engage chest more",
+          ],
+          proTip: "Ring dips are 3× harder than bar dips due to stabilization demand. The shoulder stability you build here directly transfers to all skills.",
+        },
+        {
+          title: "Cable Face Pull",
+          sets: "4",
+          reps: "15 reps",
+          rest: "60s",
+          intensity: "Accessory",
+          cues: [
+            "High pulley attachment at face height",
+            "Pull to ear level — not face level",
+            "External rotate at the top: thumbs point behind you",
+            "This is shoulder armor — never skip it",
+          ],
+          proTip: "Every pushing-dominant calisthenics program needs pulling accessory work. Face pulls prevent the internal rotation imbalance that leads to shoulder impingement.",
+        },
+      ],
+    },
+    {
+      name: "Gym Track — Block 2 (Hypertrophy Finish)",
+      tag: "Weeks 5–8",
+      duration: "4 weeks",
+      icon: "💥",
+      description: "Higher volume, shorter rest. The strength base from Block 1 now gets converted into visible muscle.",
+      exercises: [
+        {
+          title: "Incline DB Press",
+          sets: "4",
+          reps: "10–12 reps",
+          rest: "90s",
+          intensity: "Hypertrophy",
+          cues: [
+            "30° incline — not 45° (reduces shoulder stress)",
+            "Squeeze chest at top — elbows slightly in",
+            "Full stretch at bottom with 2-second pause",
+            "This hits the upper chest region critical for aesthetics",
+          ],
+          proTip: "Upper chest development is what creates the 'shelf' look. Combined with planche work, this builds the complete chest aesthetic.",
+        },
+        {
+          title: "Lat Pulldown (V-Bar)",
+          sets: "4",
+          reps: "10–12 reps",
+          rest: "90s",
+          intensity: "Hypertrophy",
+          cues: [
+            "Pull to chest — elbows to sides, not behind",
+            "Slight lean back (15°) to align with lat fiber direction",
+            "Full extension at top — feel the lat stretch",
+            "This is direct lever carryover in a controlled setting",
+          ],
+          proTip: "The V-bar creates a pulling angle very similar to front lever mechanics. Use this as supplementary lever work when your skill work volume is lower.",
+        },
+      ],
+    },
+  ],
+  cooldown: [
+    { name: "Hip Flexor Couch Stretch", duration: "2 min each", notes: "Essential after lower body gym work. Back foot on wall, front foot forward. Hold and breathe." },
+    { name: "Thoracic Extension over Foam Roller", duration: "3 min", notes: "Roll from mid to upper back. Pause at each segment. Decompresses spine after heavy loading." },
+    { name: "Shoulder Sleeper Stretch", duration: "90s each", notes: "Lying on side. Gently press forearm toward floor. Targets posterior capsule tightness." },
+    ...sharedCooldown.slice(4),
+  ],
+  benefits: [
+    "Skill + Hypertrophy fusion in 8 weeks",
+    "Complete athlete physique",
+    "Progressive overload across both tracks",
+  ],
+  stripeUrl: "https://buy.stripe.com/28EaEZ2QFdyN2MX4d73ZK09",
+};
 
-  const handleImage=(e:React.ChangeEvent<HTMLInputElement>)=>{
-    const file=e.target.files?.[0];if(!file)return;
-    const url=URL.createObjectURL(file);
-    setImageUrl(url);setResults(null);setError(null);setUnlockedOffer(null);setUnlockedUpsell(false);setInterimLandmarks(null);
-    const img=new Image();img.src=url;img.onload=()=>setImageEl(img);
+const fullHypertrophy: Program = {
+  id: "hypertrophy",
+  title: "Full Hypertrophy",
+  subtitle: "Aesthetic-Focused Muscle Building",
+  tagline: "12 weeks to your most aesthetic physique.",
+  level: "Beginner / Intermediate",
+  levelColor: "#ec4899",
+  category: "hypertrophy",
+  categoryGroup: "HYPERTROPHY",
+  price: "47",
+  icon: "🔥",
+  glowColor: "rgba(236,72,153,0.15)",
+  dualTrack: true,
+  trackLabels: ["No-Equipment", "Full Gym Access"],
+  goals: [
+    "Maximize muscle size through evidence-based hypertrophy principles",
+    "Build an aesthetic physique with balanced proportions",
+    "Progressive overload across 12 structured weeks",
+    "Full access to both bodyweight and barbell/cable hypertrophy methods",
+  ],
+  mindset: "Hypertrophy is science. Mechanical tension × metabolic stress × muscle damage — that is the formula. This program removes the guesswork and replaces it with precision. Every set, every rep range, every rest period is chosen for a specific physiological reason. Your only job is to execute consistently and eat to grow.",
+  weekStructure: "4 sessions/week. Push (Mon) · Pull (Tue) · Legs (Thu) · Upper Full (Sat). Each session 60–80 min. Progressive overload: add 1 rep or 2.5kg every session where possible.",
+  warmup: [
+    { name: "Full Body Joint Mobility Flow", duration: "5 min", notes: "Neck, shoulders, hips, knees, ankles. Every joint through full pain-free range." },
+    { name: "Activation Circuit", duration: "2 rounds", notes: "10 band pull-aparts + 10 glute bridges + 10 bodyweight squats. Primes all major groups." },
+    { name: "First Working Set at 50% Weight", duration: "1 set", notes: "Always do a warm-up set before your first working set. Non-negotiable." },
+  ],
+  phases: [
+    {
+      name: "Phase 1 — Foundation Volume",
+      tag: "Weeks 1–4",
+      duration: "4 weeks",
+      icon: "📦",
+      description: "Establish movement patterns and baseline volume. Do not test your maximum — build work capacity.",
+      exercises: [
+        {
+          title: "Pike Push-Ups (No-Equipment)",
+          sets: "4",
+          reps: "10–12 reps",
+          rest: "90s",
+          intensity: "Moderate",
+          cues: [
+            "Hips high — inverted V position",
+            "Lower until head touches floor",
+            "The steeper your pike, the more deltoid activation",
+            "Slow negative (3 seconds) for maximum time under tension",
+          ],
+          proTip: "Pike push-ups done with a 3-second negative and 1-second pause at bottom are as effective as overhead pressing for deltoid hypertrophy.",
+          progression: [
+            { label: "Standard Pike", emoji: "▽", active: true },
+            { label: "Feet Elevated", emoji: "⬆️", active: false },
+            { label: "Pseudo-Handstand", emoji: "🤸", active: false },
+          ],
+        },
+        {
+          title: "Archer Push-Ups",
+          sets: "4",
+          reps: "8 reps each side",
+          rest: "90s",
+          intensity: "Moderate-High",
+          cues: [
+            "One arm extended fully to the side — no bend",
+            "Lower toward the bent arm (90° at elbow)",
+            "The extended arm provides counterbalance only",
+            "This is a unilateral chest exercise — feel the stretch deeply",
+          ],
+          proTip: "Archer push-ups provide similar pectoral stretch to a cable fly or dumbbell press. The unilateral loading increases difficulty by ~40% vs regular push-ups.",
+        },
+        {
+          title: "Australian Pull-Ups (Bodyweight Row)",
+          sets: "4",
+          reps: "12–15 reps",
+          rest: "90s",
+          intensity: "Moderate",
+          cues: [
+            "Table, barbell in rack, or rings at hip height",
+            "Body straight as a plank throughout",
+            "Pull chest to bar — elbows at 45° from body",
+            "Slow negative builds the most mass here",
+          ],
+          proTip: "Elevate feet to make harder. Add a backpack with books to make harder. The progression path is almost unlimited with this movement.",
+        },
+      ],
+    },
+    {
+      name: "Phase 2 — Intensity Ramp",
+      tag: "Weeks 5–8",
+      duration: "4 weeks",
+      icon: "📈",
+      description: "Increase load, add intensification techniques (rest-pause, drop sets). This is where visible changes happen.",
+      exercises: [
+        {
+          title: "One-Arm Push-Up Progression",
+          sets: "5",
+          reps: "5–8 each side",
+          rest: "2 min",
+          intensity: "High",
+          cues: [
+            "Feet wide for balance, hand centered under chest",
+            "Descend slowly — do not let hip rotate",
+            "Use a low surface (sofa height) to make accessible",
+            "Full lockout at top, full depth at bottom",
+          ],
+          proTip: "The one-arm push-up is a strength test, not just a chest exercise. The core anti-rotation demand makes this a full-body movement.",
+        },
+      ],
+    },
+    {
+      name: "Phase 3 — Peak & Deload",
+      tag: "Weeks 9–12",
+      duration: "4 weeks",
+      icon: "🏆",
+      description: "Peak volume week (Week 9–10), then structured deload (Week 11), then test week (Week 12).",
+      exercises: [
+        {
+          title: "Pseudo Planche Push-Ups (Max Reps)",
+          sets: "3",
+          reps: "Max clean reps",
+          rest: "3 min",
+          intensity: "Max Effort",
+          cues: [
+            "This test measures your upper body strength/endurance total",
+            "Hands turned out, lean forward as far as your strength allows",
+            "Record this number to compare to Week 1",
+          ],
+          proTip: "Compare your Week 1 max to Week 12. A 50–100% improvement in reps is normal with this program. This is your proof of progress.",
+        },
+      ],
+    },
+  ],
+  gymPhases: [
+    {
+      name: "Gym Track — Push Day",
+      tag: "Day 1 (Monday)",
+      duration: "60–75 min",
+      icon: "💥",
+      description: "Chest, anterior delts, triceps. Compound movement first, isolation last.",
+      exercises: [
+        {
+          title: "Flat Barbell Bench Press",
+          sets: "4",
+          reps: "8 reps @ 75% 1RM",
+          rest: "2 min",
+          intensity: "Strength-Hypertrophy",
+          cues: [
+            "Arch and retract — create maximum stability",
+            "Bar path slightly diagonal to lower sternum",
+            "Pause 1 second at chest — kills the bounce, maximizes tension",
+            "Explosive press up while maintaining control",
+          ],
+          proTip: "The 1-second pause at the bottom eliminates elastic energy and forces the pec to actually contract from a dead stop. This is the secret to chest development.",
+        },
+        {
+          title: "Cable Lateral Raise",
+          sets: "4",
+          reps: "15–20 reps",
+          rest: "60s",
+          intensity: "Isolation",
+          cues: [
+            "Single-arm cable, start with cable crossing in front of body",
+            "Raise until arm parallel to floor — no higher",
+            "Lead with the elbow — not the hand",
+            "Cable maintains tension throughout vs dumbbells (which drop off at bottom)",
+          ],
+          proTip: "Cable laterals are 2–3× more effective than dumbbell laterals for medial delt hypertrophy due to constant tension. This is the most important isolation exercise for shoulder width.",
+        },
+        {
+          title: "Tricep Rope Pushdown",
+          sets: "3",
+          reps: "15 reps",
+          rest: "60s",
+          intensity: "Isolation",
+          cues: [
+            "Split the rope at the bottom — externally rotate",
+            "Elbows stay pinned to sides throughout",
+            "Full extension at bottom — squeeze tricep hard",
+            "2-second contraction at bottom",
+          ],
+          proTip: "The lateral head of the tricep creates the 'horseshoe' appearance. Rope pushdowns are its most targeted exercise. Never skip the split-and-rotate at the bottom.",
+        },
+      ],
+    },
+    {
+      name: "Gym Track — Pull Day",
+      tag: "Day 2 (Tuesday)",
+      duration: "60–75 min",
+      icon: "🔁",
+      description: "Lats, rhomboids, rear delts, biceps. The aesthetic back that makes every other muscle look better.",
+      exercises: [
+        {
+          title: "Wide-Grip Lat Pulldown",
+          sets: "4",
+          reps: "10–12 reps",
+          rest: "90s",
+          intensity: "Hypertrophy",
+          cues: [
+            "Slight lean back (15–20°) before pulling",
+            "Pull to upper chest — not chin",
+            "Full stretch at top — let shoulder blades rise",
+            "This full range is non-negotiable for lat length",
+          ],
+          proTip: "The full stretch at the top (letting scapulas elevate) is what builds lat length and that dramatic V-taper. Most people cut this short — don't.",
+        },
+        {
+          title: "Seated Cable Row (Neutral Grip)",
+          sets: "4",
+          reps: "12 reps",
+          rest: "90s",
+          intensity: "Hypertrophy",
+          cues: [
+            "Pull to lower sternum — not belly button",
+            "Lead with the elbows pulling behind you",
+            "Squeeze rhomboids at the top — pause 1s",
+            "Control the return — 3-second negative",
+          ],
+          proTip: "Back thickness is built by heavy compound rows. Width is built by pulldowns. You need both for the complete aesthetic back.",
+        },
+        {
+          title: "EZ-Bar Curl (Slow Negative)",
+          sets: "3",
+          reps: "10 reps (4-second negative)",
+          rest: "90s",
+          intensity: "Hypertrophy",
+          cues: [
+            "Elbows stay at sides — no swinging",
+            "Curl to nose level for maximum bicep peak",
+            "4-second controlled descent — maximize eccentric",
+            "Supinate at the top for peak contraction",
+          ],
+          proTip: "The 4-second negative (eccentric) is the primary driver of bicep hypertrophy. Researchers consistently find eccentric-focused protocols produce 25–40% more growth.",
+        },
+      ],
+    },
+  ],
+  cooldown: [
+    { name: "Pec Doorframe Stretch", duration: "90s each side", notes: "Arm at 90° on doorframe, gently rotate away. Holds post-pressing are critical for anterior shoulder health." },
+    { name: "Lying Glute Figure-4 Stretch", duration: "2 min each", notes: "After leg day. Cross ankle over opposite knee. Pull the knee toward chest." },
+    { name: "Cat-Cow Spinal Flow", duration: "2 min", notes: "10 reps slow, then hold the round position for 30s. Decompresses lumbar spine after squatting/deadlifting." },
+    { name: "Standing Quad Stretch", duration: "60s each", notes: "Hold ankle behind you. Keep knees together. This also stretches hip flexors if you add forward lean." },
+    { name: "Final Breathing Protocol", duration: "3 min", notes: "Box breathing: 4s in, 4s hold, 4s out, 4s hold. Activates rest-and-digest for optimal recovery." },
+  ],
+  benefits: [
+    "Aesthetic physique in 12 weeks",
+    "Progressive overload with both tracks",
+    "Scientific hypertrophy protocol",
+  ],
+  stripeUrl: "https://buy.stripe.com/aFa00l0IxeCRcnx3933ZK0a",
+};
+
+const ultimateBundle: Program = {
+  id: "bundle",
+  title: "Ultimate Gravity Bundle",
+  subtitle: "Access to ALL 5 Programs",
+  tagline: "The complete calisthenics & physique library — one price, lifetime access.",
+  level: "All Levels",
+  levelColor: "#FF4500",
+  category: "bundle",
+  categoryGroup: "BUNDLE",
+  price: "97",
+  originalPrice: "189",
+  icon: "👑",
+  glowColor: "rgba(255,69,0,0.2)",
+  badge: "BEST VALUE",
+  goals: [
+    "Complete access to all 5 programs",
+    "Planche Foundation + Planche Elite + Front Lever Mastery",
+    "Hybrid Athlete (Home & Gym tracks)",
+    "Full Hypertrophy (No-Equipment & Full Gym tracks)",
+  ],
+  mindset: "The bundle athlete has no ceiling. Every program in this library is designed to complement the others. Build your planche while growing your physique. Develop your front lever while building hybrid strength. The programs are interconnected — the whole is greater than the sum of its parts.",
+  weekStructure: "Self-directed. Choose your primary focus program and use others as supplementary. Recommended: Start with Foundation if new to planche. Start with Hypertrophy if physique is primary goal.",
+  warmup: sharedWarmup,
+  phases: plancheFoundation.phases,
+  cooldown: sharedCooldown,
+  benefits: [
+    "All 5 programs — lifetime access",
+    "Save $92 vs individual purchase",
+    "Future program updates included",
+  ],
+  stripeUrl: "https://buy.stripe.com/aFa8wR3UJeCRcnx10V3ZK0b",
+};
+
+const allPrograms: Program[] = [
+  plancheFoundation,
+  plancheElite,
+  frontLeverMastery,
+  hybridAthlete,
+  fullHypertrophy,
+  ultimateBundle,
+];
+
+ultimateBundle.bundlePrograms = [
+  plancheFoundation,
+  plancheElite,
+  frontLeverMastery,
+  hybridAthlete,
+  fullHypertrophy,
+];
+
+const PROGRAMS = allPrograms;
+const strengthSkillsGroup = [plancheFoundation, plancheElite, frontLeverMastery];
+const hybridGroup = [hybridAthlete];
+const hypertrophyGroup = [fullHypertrophy];
+
+// ═══════════════════════════════════════════════════════
+// TESTIMONIALS DATA
+// ═══════════════════════════════════════════════════════
+
+const testimonials = [
+  {
+    name: "Marcus T.",
+    handle: "@marcus_cali",
+    program: "Planche Foundation",
+    avatar: "MT",
+    avatarColor: "#22c55e",
+    rating: 5,
+    weeks: "8 weeks in",
+    result: "Hit my first clean tuck planche hold this morning. 6 seconds. I've been trying on my own for 4 months with zero progress. The warm-up protocol alone changed everything — my wrists stopped hurting after week 2.",
+  },
+  {
+    name: "Jordan K.",
+    handle: "@jk_strength",
+    program: "Hybrid Athlete",
+    avatar: "JK",
+    avatarColor: "#a855f7",
+    rating: 5,
+    weeks: "12 weeks in",
+    result: "I was skeptical about combining barbell and calisthenics. Gained 4kg of muscle while actually improving my advanced tuck hold. The dual-track format is genius — gym days and home days both programmed.",
+  },
+  {
+    name: "Alex R.",
+    handle: "@alex_levers",
+    program: "Front Lever Mastery",
+    avatar: "AR",
+    avatarColor: "#3b82f6",
+    rating: 5,
+    weeks: "10 weeks in",
+    result: "Week 10 and I held my first straddle front lever for 5 seconds. The progression from tuck to advanced tuck to straddle is perfectly structured. No guesswork. Every session tells you exactly what to do.",
+  },
+  {
+    name: "Sam W.",
+    handle: "@sw_aesthetics",
+    program: "Full Hypertrophy",
+    avatar: "SW",
+    avatarColor: "#ec4899",
+    rating: 5,
+    weeks: "12 weeks in",
+    result: "No gym? No problem. The bodyweight track alone gave me more muscle than a year of random gym sessions. The progressive overload is real — I went from 8 archer push-ups to 15 clean reps each side.",
+  },
+  {
+    name: "Tom B.",
+    handle: "@tombfit_cali",
+    program: "Planche Elite",
+    avatar: "TB",
+    avatarColor: "#f97316",
+    rating: 5,
+    weeks: "7 weeks in",
+    result: "Went from a shaky advanced tuck to a stable 4-second straddle hold. The eccentric negatives are brutal but they work. My strength jumped faster in 7 weeks than in the previous 6 months of self-programming.",
+  },
+  {
+    name: "Lena M.",
+    handle: "@lena.moves",
+    program: "Ultimate Bundle",
+    avatar: "LM",
+    avatarColor: "#FF4500",
+    rating: 5,
+    weeks: "16 weeks in",
+    result: "Got the bundle and I'm alternating between Hypertrophy and Front Lever. The programs complement each other perfectly. Best $97 I've ever spent on fitness — this replaced a $80/month PT I was paying for.",
+  },
+];
+
+// ═══════════════════════════════════════════════════════
+// FAQ DATA
+// ═══════════════════════════════════════════════════════
+
+const faqs = [
+  {
+    q: "What format are the programs? PDF, video, app?",
+    a: "Programs are delivered as a structured digital manual (PDF + web access). Every exercise includes written cues, progression paths, and pro tips. No app subscription needed — lifetime access means you own it forever.",
+  },
+  {
+    q: "I have zero experience with calisthenics. Where do I start?",
+    a: "Start with Planche Foundation. It's designed from absolute zero — the first 3 weeks build the connective tissue and scapular control you need before attempting any skill. If physique is your main goal with no skill focus, start with Full Hypertrophy instead.",
+  },
+  {
+    q: "Do I need a gym or special equipment?",
+    a: "For skill programs (Planche, Front Lever), you need parallettes or a pull-up bar — both under $50. For Hybrid Athlete and Full Hypertrophy, there are dual tracks: one fully bodyweight (floor only), one for gym access. You pick what fits your setup.",
+  },
+  {
+    q: "How long until I see real results?",
+    a: "Most athletes notice strength changes within 2–3 weeks and visible skill progression by Week 4–6. The programs are designed for measurable results at every phase — you'll be testing and recording holds so you can see the exact progress over time.",
+  },
+  {
+    q: "What if the program is too hard or too easy?",
+    a: "Every exercise includes a progression path (easier and harder variants). If the main exercise is too hard, the previous progression step is listed. If too easy, the next step is there. The program adapts to where you actually are — not where you think you should be.",
+  },
+  {
+    q: "Is there any support if I have questions?",
+    a: "Yes — you get direct access via email. Questions about form, programming adjustments, or exercise substitutions are answered personally. This isn't an automated bot response system.",
+  },
+  {
+    q: "Can I run multiple programs at the same time?",
+    a: "Generally no — one primary program at a time. The exception is the Hybrid Athlete, which is specifically designed to combine skill and strength work. The Bundle includes guidance on how to sequence programs intelligently over a 6–12 month period.",
+  },
+  {
+    q: "What's the refund policy?",
+    a: "If you complete the first 2 weeks of the program and aren't seeing any progress or finding value, reach out within 30 days for a full refund. The program works if you work it — that's the only condition.",
+  },
+];
+
+// ═══════════════════════════════════════════════════════
+// COUNTDOWN TIMER HOOK
+// ═══════════════════════════════════════════════════════
+
+function useCountdown() {
+  const getTargetTime = () => {
+    const stored = localStorage.getItem("gl_bundle_deadline");
+    if (stored) return parseInt(stored);
+    const deadline = Date.now() + 48 * 60 * 60 * 1000;
+    localStorage.setItem("gl_bundle_deadline", deadline.toString());
+    return deadline;
   };
 
-  const runAnalysis=useCallback(async()=>{
-    if(!imageEl||!modelsLoaded||!gender||!age)return;
-    setAnalyzing(true);setError(null);setProgress(0);setAnalysisPhase(0);
-    const phases=[
-      {text:"Détection du visage...",dur:600,phase:0},
-      {text:"Mapping 68 landmarks biométriques...",dur:800,phase:1},
-      {text:"Analyse de la symétrie faciale...",dur:700,phase:2},
-      {text:"Calcul des tiers faciaux...",dur:600,phase:3},
-      {text:"Évaluation du canthal tilt...",dur:500,phase:4},
-      {text:"Score mandibulaire & menton...",dur:600,phase:5},
-      {text:"Calibration Échelle PSL...",dur:700,phase:6},
-      {text:"Calcul du potentiel de progression...",dur:600,phase:7},
-      {text:"Génération du rapport personnalisé...",dur:500,phase:8},
-    ];
-    for(let i=0;i<phases.length;i++){
-      setAnalysisStep(phases[i].text);setAnalysisPhase(phases[i].phase);
-      setProgress(Math.round(((i+1)/phases.length)*88));
-      if(i===1){
-        try{
-          const det=await faceapi.detectSingleFace(imageEl,new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks();
-          if(det)setInterimLandmarks(det.landmarks.positions);
-        }catch{}
+  const [timeLeft, setTimeLeft] = useState({ h: 47, m: 59, s: 59 });
+
+  useEffect(() => {
+    const target = getTargetTime();
+    const tick = () => {
+      const diff = target - Date.now();
+      if (diff <= 0) {
+        setTimeLeft({ h: 0, m: 0, s: 0 });
+        return;
       }
-      await new Promise(r=>setTimeout(r,phases[i].dur));
-    }
-    try{
-      const score=await analyzeFace(imageEl,gender,age);
-      const adv=generateAdvice(score,gender,age);
-      setProgress(100);setAnalysisStep("Analyse complète ✓");
-      await new Promise(r=>setTimeout(r,400));
-      setResults(score);setAdvice(adv);setActiveTab("scores");setPage("results");
-    }catch(err:any){setError(err.message||"Erreur d'analyse.");}
-    finally{setAnalyzing(false);}
-  },[imageEl,modelsLoaded,gender,age]);
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setTimeLeft({ h, m, s });
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, []);
 
-  const STRIPE_LINKS:Record<string,string>={
-    basic:"https://buy.stripe.com/dRm8wO7TUcTf3ji97Z9oc05",
-    premium:"https://buy.stripe.com/00w8wOb66g5rbPO4RJ9oc07",
-    upsell:"https://buy.stripe.com/8x28wO6PQ06tcTS5VN9oc03",
-  };
-  const handlePay=(offer:"basic"|"premium"|"upsell")=>{
-    window.open(STRIPE_LINKS[offer],"_blank");
-  };
+  return timeLeft;
+}
 
-  const reset=()=>{
-    setPage("landing");setGender(null);setAge(null);
-    setImageUrl(null);setImageEl(null);setResults(null);setInterimLandmarks(null);
-    setAdvice([]);setError(null);setProgress(0);setUnlockedOffer(null);setUnlockedUpsell(false);
-  };
+// ═══════════════════════════════════════════════════════
+// DASHBOARD (inlined)
+// ═══════════════════════════════════════════════════════
 
-  // ─── LANDING ──────────────────────────────────────────────────────────────
-  if(page==="landing"){
-    return(
-      <main className="min-h-screen bg-[#06060c] text-white relative overflow-hidden" style={{fontFamily:"'Helvetica Neue',Arial,sans-serif"}}>
-        <style>{CSS}</style>
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_70%_60%_at_50%_-5%,rgba(99,102,241,0.14),transparent)]"/>
-        <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.007)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.007)_1px,transparent_1px)] bg-[size:52px_52px]"/>
+function SectionBar({ title, tag }: { title: string; tag?: string }) {
+  return (
+    <div className="section-divider">
+      <div className="dot" />
+      <div className="line" />
+      <span className="t-display print-h2" style={{ fontSize: 26, flexShrink: 0 }}>{title}</span>
+      {tag && <span className="t-label" style={{ color: "var(--text-faint)", fontSize: 10, flexShrink: 0 }}>{tag}</span>}
+      <div className="line" />
+    </div>
+  );
+}
 
-        <div className="relative z-10 min-h-screen flex flex-col lg:flex-row">
+function Checkbox({ checked }: { checked: boolean }) {
+  return (
+    <div style={{ width: 22, height: 22, border: `1.5px solid ${checked ? "var(--orange)" : "var(--border-bright)"}`, borderRadius: 3, display: "flex", alignItems: "center", justifyContent: "center", background: checked ? "var(--orange)" : "transparent", transition: "all 0.2s", flexShrink: 0 }}>
+      {checked && <Check size={12} color="white" />}
+    </div>
+  );
+}
 
-          {/* LEFT — Reviews */}
-          <div className="hidden lg:flex flex-col gap-3 w-72 xl:w-80 flex-shrink-0 p-8 pt-16 border-r border-white/[0.04] overflow-y-auto">
-            <div className="text-[8px] font-black text-white/20 uppercase tracking-[0.2em] mb-2">Avis vérifiés · +400 analyses</div>
-            {REVIEWS.slice(0,5).map((r,i)=>(
-              <div key={i} className="p-3.5 bg-white/[0.025] border border-white/[0.04] rounded-2xl hover:border-white/[0.08] transition-all">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="w-8 h-8 rounded-full flex items-center justify-center text-[9px] font-black flex-shrink-0" style={{background:`${r.color}30`,border:`1px solid ${r.color}40`}}>{r.avatar}</div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-[10px] font-black text-white/65 truncate">{r.name}, {r.age} ans</p>
-                    <div className="flex gap-0.5">{[...Array(r.stars)].map((_,j)=><span key={j} className="text-yellow-400 text-[9px]">★</span>)}{r.stars<5&&<span className="text-white/18 text-[9px]">★</span>}</div>
+function ProgressionRail({ steps }: { steps: { label: string; emoji: string; hold?: string; active?: boolean }[] }) {
+  return (
+    <div className="progression-rail" style={{ display: "flex", alignItems: "flex-end", gap: 0, padding: "8px 0 4px", overflowX: "auto" }}>
+      {steps.map((step, i) => (
+        <div key={i} style={{ display: "flex", alignItems: "flex-end", gap: 0, flexShrink: 0 }}>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 6 }}>
+            <div style={{ fontFamily: "var(--font-body)", fontSize: 10, color: step.active ? "var(--orange)" : "var(--text-faint)", letterSpacing: 1, textTransform: "uppercase", textAlign: "center", maxWidth: 64, lineHeight: 1.3 }}>
+              {step.hold && <div style={{ color: step.active ? "var(--orange)" : "var(--text-faint)", marginBottom: 2 }}>{step.hold}</div>}
+              {step.label}
+            </div>
+            <div style={{ width: 52, height: 52, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 18, border: `2px solid ${step.active ? "var(--orange)" : "var(--border-bright)"}`, background: step.active ? "var(--orange-dim)" : "var(--bg-card)", boxShadow: step.active ? "0 0 18px rgba(255,69,0,0.3)" : "none", transition: "all 0.2s" }}>
+              {step.emoji}
+            </div>
+          </div>
+          {i < steps.length - 1 && (
+            <div style={{ width: 28, height: 2, background: step.active ? "var(--orange)" : "var(--border)", marginBottom: 26, flexShrink: 0 }} />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ExerciseCard({ ex, index }: { ex: Exercise; index: number }) {
+  const [open, setOpen] = useState(index === 0);
+  return (
+    <div className="surface-2 print-avoid-break ex-card-print" style={{ borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
+      <button onClick={() => setOpen(!open)} style={{ width: "100%", background: "transparent", border: "none", cursor: "pointer", padding: "16px 20px", display: "flex", alignItems: "center", gap: 12, textAlign: "left" }}>
+        <div style={{ width: 28, height: 28, borderRadius: "50%", background: "var(--orange-dim)", border: "1px solid var(--orange-border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+          <span className="t-label" style={{ color: "var(--orange)", fontSize: 10 }}>{String(index + 1).padStart(2, "0")}</span>
+        </div>
+        <div style={{ flex: 1 }}>
+          <div className="t-display" style={{ fontSize: 17, color: "var(--text)" }}>{ex.title}</div>
+          <div style={{ display: "flex", gap: 16, marginTop: 4, flexWrap: "wrap" }}>
+            {[{ label: "Sets", val: ex.sets }, { label: "Reps", val: ex.reps }, { label: "Rest", val: ex.rest }].map(({ label, val }) => (
+              <span key={label} className="t-body" style={{ fontSize: 12, color: "var(--text-faint)" }}>
+                <span style={{ color: "var(--orange)" }}>{val}</span> {label}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <span className="badge" style={{ background: "rgba(255,255,255,0.04)", color: "var(--text-faint)", border: "1px solid var(--border)", fontSize: 9 }}>{ex.intensity}</span>
+          {open ? <ChevronUp size={14} style={{ color: "var(--text-faint)" }} /> : <ChevronDown size={14} style={{ color: "var(--text-faint)" }} />}
+        </div>
+      </button>
+      {open && (
+        <div style={{ padding: "0 20px 20px" }}>
+          {ex.progression && ex.progression.length > 0 && (
+            <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: "1px solid var(--border)" }}>
+              <div className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, marginBottom: 10 }}>PROGRESSION PATH</div>
+              <ProgressionRail steps={ex.progression} />
+            </div>
+          )}
+          <div style={{ marginBottom: 14 }}>
+            <div className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, marginBottom: 10 }}>TECHNICAL CUES</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {ex.cues.map((cue, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+                  <div style={{ width: 18, height: 18, borderRadius: 2, background: "var(--orange-dim)", border: "1px solid var(--orange-border)", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
+                    <span className="t-label" style={{ color: "var(--orange)", fontSize: 9 }}>{i + 1}</span>
                   </div>
-                  <span className="text-sm font-black flex-shrink-0" style={{color:r.color}}>{r.score}</span>
+                  <p className="t-body" style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.5 }}>{cue}</p>
                 </div>
-                <p className="text-[9px] text-white/38 leading-relaxed">"{r.text}"</p>
+              ))}
+            </div>
+          </div>
+          <div style={{ background: "rgba(255,69,0,0.04)", borderLeft: "3px solid var(--orange)", borderRadius: "0 4px 4px 0", padding: "12px 14px" }}>
+            <div className="t-label" style={{ color: "var(--orange)", fontSize: 9, marginBottom: 6 }}>💡 PRO TIP</div>
+            <p className="t-body print-body" style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.55, fontStyle: "italic" }}>{ex.proTip}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PhaseBlock({ phase, index }: { phase: Phase; index: number }) {
+  const [collapsed, setCollapsed] = useState(false);
+  return (
+    <div className="surface print-break-before print-avoid-break" style={{ borderRadius: 10, overflow: "hidden", border: "1px solid var(--border)", marginBottom: 24 }}>
+      <button onClick={() => setCollapsed(!collapsed)} style={{ width: "100%", background: "transparent", border: "none", cursor: "pointer" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "18px 24px", background: "linear-gradient(90deg, rgba(255,69,0,0.08) 0%, transparent 100%)", borderBottom: collapsed ? "none" : "1px solid var(--border)", textAlign: "left" }}>
+          <div style={{ fontSize: 24, flexShrink: 0 }}>{phase.icon}</div>
+          <div style={{ flex: 1 }}>
+            <div className="t-display print-h3" style={{ fontSize: 20, color: "var(--text)" }}>{phase.name}</div>
+            <div style={{ display: "flex", gap: 12, marginTop: 4, flexWrap: "wrap" }}>
+              <span className="badge" style={{ background: "var(--orange-dim)", color: "var(--orange)", border: "1px solid var(--orange-border)", fontSize: 9 }}>{phase.tag}</span>
+              <span className="t-label" style={{ color: "var(--text-faint)", fontSize: 9 }}>{phase.duration} · {phase.exercises.length} exercises</span>
+            </div>
+          </div>
+          {collapsed ? <ChevronDown size={16} style={{ color: "var(--text-faint)", flexShrink: 0 }} /> : <ChevronUp size={16} style={{ color: "var(--text-faint)", flexShrink: 0 }} />}
+        </div>
+      </button>
+      {!collapsed && (
+        <div style={{ padding: "20px 24px" }}>
+          <p className="t-body print-body" style={{ fontSize: 14, color: "var(--text-dim)", lineHeight: 1.6, marginBottom: 24, borderBottom: "1px solid var(--border)", paddingBottom: 20 }}>{phase.description}</p>
+          <div className="ex-grid" style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))", gap: 14 }}>
+            {phase.exercises.map((ex, i) => <ExerciseCard key={i} ex={ex} index={i} />)}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WarmupCooldown({ items, title, icon, tag }: { items: { name: string; duration: string; notes: string }[]; title: string; icon: React.ReactNode; tag: string }) {
+  const [checkedMap, setCheckedMap] = useState<Record<number, boolean>>({});
+  return (
+    <div style={{ marginBottom: 40 }}>
+      <SectionBar title={title} tag={tag} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {items.map((item, i) => (
+          <div key={i} className="surface check-row" onClick={() => setCheckedMap(prev => ({ ...prev, [i]: !prev[i] }))}
+            style={{ borderRadius: 6, padding: "14px 18px", display: "flex", alignItems: "flex-start", gap: 12, cursor: "pointer", opacity: checkedMap[i] ? 0.4 : 1, border: `1px solid ${checkedMap[i] ? "var(--orange-border)" : "var(--border)"}`, transition: "all 0.2s" }}>
+            <div style={{ marginTop: 2 }}><Checkbox checked={!!checkedMap[i]} /></div>
+            <div style={{ flex: 1 }}>
+              <div className="t-display" style={{ fontSize: 15, textDecoration: checkedMap[i] ? "line-through" : "none", color: "var(--text)" }}>{item.name}</div>
+              <p className="t-body" style={{ fontSize: 12, color: "var(--text-faint)", lineHeight: 1.45, marginTop: 3 }}>{item.notes}</p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+              <Clock size={11} style={{ color: "var(--orange)" }} />
+              <span className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, whiteSpace: "nowrap" }}>{item.duration}</span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PrintCover({ program }: { program: Program }) {
+  return (
+    <div className="print-cover" style={{ display: "none", pageBreakAfter: "always" }}>
+      <div className="print-cover-accent" />
+      <div className="t-label" style={{ color: "var(--orange)", fontSize: 11, letterSpacing: 3, marginBottom: 16 }}>GRAVITYLAB — ELITE TRAINING MANUAL</div>
+      <h1 className="print-title t-serif" style={{ fontSize: 52, lineHeight: 1.05, marginBottom: 16 }}>{program.title}</h1>
+      <p className="t-serif" style={{ fontSize: 20, color: "#555", marginBottom: 48, fontStyle: "italic" }}>{program.tagline}</p>
+      <div style={{ borderTop: "1px solid #ddd", paddingTop: 20 }}>
+        <p className="t-body print-body" style={{ fontSize: 12, color: "#888" }}>© 2025 GravityLab · Lifetime Access · gravitylab.com</p>
+      </div>
+    </div>
+  );
+}
+
+function BundleDashboard({ program, onBack }: { program: Program; onBack: () => void }) {
+  const bundleProgs = program.bundlePrograms ?? [];
+  const [activeProg, setActiveProg] = useState<Program>(bundleProgs[0]);
+  const [activeTrack, setActiveTrack] = useState<0 | 1>(0);
+  const phases: Phase[] = activeProg.dualTrack && activeTrack === 1 ? (activeProg.gymPhases ?? activeProg.phases) : activeProg.phases;
+
+  return (
+    <div style={{ background: "var(--bg)", color: "var(--text)", minHeight: "100vh" }}>
+      <PrintCover program={program} />
+      <div className="no-print" style={{ background: "rgba(10,10,10,0.94)", backdropFilter: "blur(24px)", borderBottom: "1px solid var(--border)", padding: "16px 24px", position: "sticky", top: 0, zIndex: 200 }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }} className="dash-head">
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <button className="btn-ghost" onClick={onBack}><ArrowLeft size={13} /> Programs</button>
+            <div style={{ borderLeft: "1px solid var(--border-bright)", paddingLeft: 16 }}>
+              <div className="t-display" style={{ fontSize: 19, lineHeight: 1 }}>👑 Ultimate Gravity Bundle</div>
+              <div className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, marginTop: 3 }}>ALL 5 PROGRAMS — LIFETIME ACCESS</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 10 }}>
+            {program.stripeUrl && (
+              <a href={program.stripeUrl} target="_blank" rel="noopener noreferrer">
+                <button className="btn-primary" style={{ padding: "10px 20px", fontSize: 12, background: "linear-gradient(135deg,var(--orange),#ff8c00)" }}>
+                  Get Bundle — ${program.price}
+                </button>
+              </a>
+            )}
+            <button className="btn-ghost" style={{ padding: "10px 20px", fontSize: 12 }} onClick={() => window.print()}>
+              <Download size={12} /> Download Manual
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 24px 0" }}>
+        <div style={{ background: "linear-gradient(135deg, rgba(255,69,0,0.1), rgba(255,69,0,0.03))", border: "1px solid var(--orange-border)", borderRadius: 12, padding: "32px 36px", marginBottom: 36, position: "relative", overflow: "hidden" }}>
+          <div style={{ position: "absolute", top: -30, right: -30, fontSize: 120, opacity: 0.06, pointerEvents: "none" }}>👑</div>
+          <div className="badge" style={{ background: "var(--orange-dim)", color: "var(--orange)", border: "1px solid var(--orange-border)", marginBottom: 14 }}>BUNDLE — ALL 5 PROGRAMS</div>
+          <h2 className="t-display" style={{ fontSize: "clamp(26px,4vw,44px)", marginBottom: 10 }}>Your Complete Training Library</h2>
+          <p className="t-body" style={{ fontSize: 14, color: "var(--text-dim)", maxWidth: 640, lineHeight: 1.65, marginBottom: 20 }}>{program.mindset}</p>
+          <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+            {program.benefits.map((b, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                <Check size={12} style={{ color: "var(--orange)" }} />
+                <span className="t-body" style={{ fontSize: 12, color: "rgba(255,255,255,0.6)" }}>{b}</span>
               </div>
             ))}
-            <div className="p-3 bg-yellow-500/6 border border-yellow-500/12 rounded-xl text-center">
-              <div className="flex justify-center gap-0.5 mb-1">{[...Array(5)].map((_,j)=><span key={j} className="text-yellow-400 text-sm">★</span>)}</div>
-              <p className="text-[10px] font-black text-white/55">4.9/5 · 412 avis</p>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: 32 }}>
+          <div className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, letterSpacing: 2, marginBottom: 12 }}>SELECT PROGRAM</div>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {bundleProgs.map(p => (
+              <button key={p.id} onClick={() => { setActiveProg(p); setActiveTrack(0); }}
+                style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 18px", borderRadius: 6, border: `1px solid ${activeProg.id === p.id ? "var(--orange)" : "var(--border)"}`, background: activeProg.id === p.id ? "var(--orange-dim)" : "var(--bg-card)", color: activeProg.id === p.id ? "var(--orange)" : "var(--text-dim)", cursor: "pointer", transition: "all .2s", fontFamily: "var(--fd)", fontWeight: 700, fontSize: 12, letterSpacing: 1, textTransform: "uppercase" }}>
+                <span style={{ fontSize: 16 }}>{p.icon}</span>
+                <div style={{ textAlign: "left" }}>
+                  <div>{p.title}</div>
+                  <div style={{ fontSize: 9, fontFamily: "var(--fb)", fontWeight: 300, color: activeProg.id === p.id ? "var(--orange)" : "var(--text-faint)", marginTop: 1 }}>{p.level}</div>
+                </div>
+                {activeProg.id === p.id && <div style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--orange)", marginLeft: 4 }} />}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="surface" style={{ padding: "18px 22px", borderRadius: 8, marginBottom: 32, display: "flex", alignItems: "center", gap: 20, flexWrap: "wrap", borderLeft: `3px solid ${activeProg.levelColor}` }}>
+          <div style={{ fontSize: 32 }}>{activeProg.icon}</div>
+          <div style={{ flex: 1 }}>
+            <div className="t-display" style={{ fontSize: 20 }}>{activeProg.title} <span style={{ fontSize: 12, fontFamily: "var(--fb)", color: activeProg.levelColor }}>— {activeProg.level}</span></div>
+            <p className="t-body" style={{ fontSize: 13, color: "var(--text-dim)", marginTop: 4 }}>{activeProg.tagline}</p>
+          </div>
+          {activeProg.dualTrack && activeProg.trackLabels && (
+            <div className="track-toggle">
+              {activeProg.trackLabels.map((label, idx) => (
+                <button key={label} className={`track-btn ${activeTrack === idx ? "active" : ""}`} onClick={() => setActiveTrack(idx as 0 | 1)}>
+                  {idx === 0 ? <Home size={12} /> : <Dumbbell size={12} />}
+                  {label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "0 24px 60px" }}>
+        <div style={{ display: "flex", gap: 20, marginBottom: 40, flexWrap: "wrap" }}>
+          <div className="surface" style={{ flex: 2, minWidth: 260, padding: "20px", borderRadius: 8 }}>
+            <div className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, marginBottom: 12 }}><Target size={10} style={{ display: "inline", marginRight: 5, color: "var(--orange)" }} />PROGRAM GOALS</div>
+            <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+              {activeProg.goals.map((g, i) => (
+                <li key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                  <Check size={11} style={{ color: "var(--orange)", marginTop: 3, flexShrink: 0 }} />
+                  <span className="t-body" style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.45 }}>{g}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div className="surface" style={{ flex: 1, minWidth: 220, padding: "20px", borderRadius: 8 }}>
+            <div className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, marginBottom: 8 }}><Layers size={10} style={{ display: "inline", marginRight: 5, color: "var(--orange)" }} />STRUCTURE</div>
+            <p className="t-body" style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.5 }}>{activeProg.weekStructure}</p>
+          </div>
+        </div>
+
+        <WarmupCooldown items={activeProg.warmup} title="WARM-UP & MOBILITY" icon={<Thermometer size={16} />} tag={`${activeProg.warmup.length} exercises · ~15 min`} />
+        <section style={{ marginBottom: 52 }}>
+          <SectionBar title="CORE PROGRAM" tag={`${phases.length} phases · ${phases.reduce((acc, p) => acc + p.exercises.length, 0)} exercises`} />
+          {phases.map((phase, i) => <PhaseBlock key={`${activeProg.id}-${i}`} phase={phase} index={i} />)}
+        </section>
+        <WarmupCooldown items={activeProg.cooldown} title="COOL DOWN & RECOVERY" icon={<Wind size={16} />} tag={`${activeProg.cooldown.length} exercises · ~12 min`} />
+
+        <div className="no-print" style={{ marginTop: 56, paddingTop: 28, borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+          <button className="btn-ghost" onClick={onBack}><ArrowLeft size={13} /> Back to Programs</button>
+          <button className="btn-primary" onClick={() => window.print()}><Download size={13} /> Download Full Manual</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Dashboard({ program, onBack }: { program: Program; onBack: () => void }) {
+  const [activeTrack, setActiveTrack] = useState<0 | 1>(0);
+  const [progressWeek] = useState(3);
+  const totalWeeks = 8;
+  const phases: Phase[] = program.dualTrack && activeTrack === 1 ? (program.gymPhases ?? program.phases) : program.phases;
+
+  return (
+    <div style={{ background: "var(--bg)", color: "var(--text)", minHeight: "100vh" }}>
+      <PrintCover program={program} />
+      <div className="no-print" style={{ background: "rgba(10,10,10,0.94)", backdropFilter: "blur(24px)", borderBottom: "1px solid var(--border)", padding: "16px 24px", position: "sticky", top: 0, zIndex: 200 }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }} className="dash-head">
+          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+            <button className="btn-ghost" onClick={onBack}><ArrowLeft size={13} /> Programs</button>
+            <div style={{ borderLeft: "1px solid var(--border-bright)", paddingLeft: 16 }}>
+              <div className="t-display" style={{ fontSize: 19, lineHeight: 1 }}>{program.title}</div>
+              <div className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, marginTop: 3 }}>{program.subtitle}</div>
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            {program.dualTrack && program.trackLabels && (
+              <div className="track-toggle">
+                {program.trackLabels.map((label, idx) => (
+                  <button key={label} className={`track-btn ${activeTrack === idx ? "active" : ""}`} onClick={() => setActiveTrack(idx as 0 | 1)}>
+                    {idx === 0 ? <Home size={12} /> : <Dumbbell size={12} />}
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+            {program.stripeUrl && (
+              <a href={program.stripeUrl} target="_blank" rel="noopener noreferrer">
+                <button className="btn-primary" style={{ padding: "10px 20px", fontSize: 12 }}>Get Access — ${program.price}</button>
+              </a>
+            )}
+            <button className="btn-ghost" style={{ padding: "10px 20px", fontSize: 12 }} onClick={() => window.print()}>
+              <Download size={12} /> Download Manual
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={{ maxWidth: 1100, margin: "0 auto", padding: "40px 24px" }}>
+        <section style={{ marginBottom: 56 }} className="print-break-before">
+          <div style={{ display: "flex", gap: 24, flexWrap: "wrap", marginBottom: 28 }}>
+            <div style={{ flex: 2, minWidth: 260 }}>
+              <div className="badge" style={{ background: "var(--orange-dim)", color: "var(--orange)", border: "1px solid var(--orange-border)", marginBottom: 16 }}>
+                <BookOpen size={10} /> INTRODUCTION
+              </div>
+              <h1 className="t-display print-title" style={{ fontSize: "clamp(36px,5vw,56px)", lineHeight: 0.95, marginBottom: 12 }}>{program.title}</h1>
+              <p className="t-serif" style={{ fontSize: 19, color: "var(--text-dim)", lineHeight: 1.5, marginBottom: 20, fontStyle: "italic" }}>{program.tagline}</p>
+              <p className="t-body print-body" style={{ fontSize: 14, color: "var(--text-dim)", lineHeight: 1.7, maxWidth: 580 }}>{program.mindset}</p>
+            </div>
+            <div style={{ flex: 1, minWidth: 220 }}>
+              <div className="surface" style={{ padding: "20px", borderRadius: 8, marginBottom: 16 }}>
+                <div className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, marginBottom: 12 }}>
+                  <Target size={10} style={{ display: "inline", marginRight: 5, color: "var(--orange)" }} />PROGRAM GOALS
+                </div>
+                <ul style={{ listStyle: "none", display: "flex", flexDirection: "column", gap: 8 }}>
+                  {program.goals.map((g, i) => (
+                    <li key={i} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+                      <Check size={11} style={{ color: "var(--orange)", marginTop: 3, flexShrink: 0 }} />
+                      <span className="t-body" style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", lineHeight: 1.45 }}>{g}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <div className="surface" style={{ padding: "16px 20px", borderRadius: 8 }}>
+                <div className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, marginBottom: 8 }}>
+                  <Layers size={10} style={{ display: "inline", marginRight: 5, color: "var(--orange)" }} />STRUCTURE
+                </div>
+                <p className="t-body" style={{ fontSize: 13, color: "rgba(255,255,255,0.6)", lineHeight: 1.5 }}>{program.weekStructure}</p>
+              </div>
+            </div>
+          </div>
+          <div className="no-print glass" style={{ padding: "18px 22px", borderRadius: 8, display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
+            <div style={{ flex: 1, minWidth: 180 }}>
+              <div className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, marginBottom: 8 }}>YOUR PROGRESS</div>
+              <div className="progress-bar"><div className="progress-fill" style={{ width: `${(progressWeek / totalWeeks) * 100}%` }} /></div>
+            </div>
+            <div className="t-display" style={{ fontSize: 28, color: "var(--orange)" }}>{Math.round((progressWeek / totalWeeks) * 100)}%</div>
+            <div className="t-body" style={{ fontSize: 13, color: "var(--text-faint)" }}>Week {progressWeek} / {totalWeeks}</div>
+          </div>
+        </section>
+
+        {program.dualTrack && program.trackLabels && (
+          <div className="no-print" style={{ background: "linear-gradient(135deg, rgba(255,69,0,0.07), rgba(255,69,0,0.03))", border: "1px solid var(--orange-border)", borderRadius: 8, padding: "18px 22px", marginBottom: 40, display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+            <RefreshCw size={18} style={{ color: "var(--orange)", flexShrink: 0 }} />
+            <div>
+              <div className="t-display" style={{ fontSize: 16, marginBottom: 3 }}>Dual-Track Program Active</div>
+              <p className="t-body" style={{ fontSize: 13, color: "var(--text-dim)" }}>Currently viewing: <strong style={{ color: "var(--orange)" }}>{program.trackLabels[activeTrack]}</strong> — Switch between tracks using the toggle above.</p>
+            </div>
+          </div>
+        )}
+
+        <WarmupCooldown items={program.warmup} title="WARM-UP & MOBILITY" icon={<Thermometer size={16} />} tag={`${program.warmup.length} exercises · ~15 min`} />
+        <section style={{ marginBottom: 52 }}>
+          <SectionBar title="CORE PROGRAM" tag={`${phases.length} phases · ${phases.reduce((acc, p) => acc + p.exercises.length, 0)} exercises`} />
+          {phases.map((phase, i) => <PhaseBlock key={i} phase={phase} index={i} />)}
+        </section>
+        <WarmupCooldown items={program.cooldown} title="COOL DOWN & RECOVERY" icon={<Wind size={16} />} tag={`${program.cooldown.length} exercises · ~12 min`} />
+
+        <div className="no-print" style={{ marginTop: 56, paddingTop: 28, borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 16 }}>
+          <button className="btn-ghost" onClick={onBack}><ArrowLeft size={13} /> Back to Programs</button>
+          <button className="btn-primary" onClick={() => window.print()}><Download size={13} /> Download Full Manual</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// PROGRAM CARD
+// ═══════════════════════════════════════════════════════
+
+function ProgramCard({ program: p, onOpen }: { program: Program; onOpen: (p: Program) => void }) {
+  return (
+    <div className="surface card-lift" style={{ borderRadius: 8, padding: "24px", display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }} onClick={() => p.stripeUrl ? window.open(p.stripeUrl, "_blank") : onOpen(p)}>
+      <div style={{ position: "absolute", inset: 0, background: `radial-gradient(ellipse at top left, ${p.glowColor}, transparent 60%)`, pointerEvents: "none", borderRadius: 8 }} />
+      {p.badge && (
+        <div style={{ position: "absolute", top: 12, right: -26, background: p.category === "bundle" ? "linear-gradient(135deg,var(--orange),#ff8c00)" : "var(--orange)", color: "#fff", fontSize: 9, fontWeight: 800, letterSpacing: 2, fontFamily: "var(--fb)", padding: "4px 32px", transform: "rotate(35deg)", transformOrigin: "center", whiteSpace: "nowrap", zIndex: 2 }}>{p.badge}</div>
+      )}
+      <div style={{ position: "relative", flex: 1, display: "flex", flexDirection: "column" }}>
+        <div style={{ fontSize: 30, marginBottom: 10 }}>{p.icon}</div>
+        <span className="badge" style={{ background: `${p.levelColor}18`, color: p.levelColor, border: `1px solid ${p.levelColor}30`, marginBottom: 10, alignSelf: "flex-start" }}>{p.level}</span>
+        <h3 style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 21, textTransform: "uppercase", marginBottom: 3, lineHeight: 1.05, color: "var(--text)" }}>{p.title}</h3>
+        <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: "var(--text-dim)", marginBottom: 12, lineHeight: 1.4 }}>{p.subtitle}</p>
+        {p.dualTrack && p.trackLabels && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "var(--orange-dim)", border: "1px solid var(--orange-border)", borderRadius: 3, padding: "4px 10px", marginBottom: 12, alignSelf: "flex-start" }}>
+            <RefreshCw size={10} style={{ color: "var(--orange)" }} />
+            <span style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 700, color: "var(--orange)", letterSpacing: 1.5, textTransform: "uppercase" }}>2 Tracks:</span>
+            <span style={{ fontFamily: "var(--fb)", fontSize: 11, color: "var(--text-dim)" }}>{p.trackLabels[0]}</span>
+            <span style={{ color: "var(--text-faint)" }}>|</span>
+            <span style={{ fontFamily: "var(--fb)", fontSize: 11, color: "var(--text-dim)" }}>{p.trackLabels[1]}</span>
+          </div>
+        )}
+        {p.category === "bundle" && (
+          <div style={{ display: "flex", alignItems: "center", gap: 6, background: "rgba(255,69,0,.07)", border: "1px solid var(--orange-border)", borderRadius: 3, padding: "4px 10px", marginBottom: 12, alignSelf: "flex-start" }}>
+            <Package size={10} style={{ color: "var(--orange)" }} />
+            <span style={{ fontFamily: "var(--fb)", fontSize: 9, fontWeight: 700, color: "var(--orange)", letterSpacing: 1.5, textTransform: "uppercase" }}>All 5 Programs Included</span>
+          </div>
+        )}
+        <ul style={{ listStyle: "none", marginBottom: 18, display: "flex", flexDirection: "column", gap: 7, flex: 1 }}>
+          {p.benefits.map((b) => (
+            <li key={b} style={{ display: "flex", alignItems: "flex-start", gap: 8 }}>
+              <Check size={11} style={{ color: "var(--orange)", marginTop: 3, flexShrink: 0 }} />
+              <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: "rgba(255,255,255,.62)", lineHeight: 1.4 }}>{b}</span>
+            </li>
+          ))}
+        </ul>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", paddingTop: 14, borderTop: "1px solid var(--border)", marginTop: "auto" }}>
+          <div>
+            <span style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 36, color: p.category === "bundle" ? "var(--orange)" : "var(--text)", lineHeight: 1 }}>${p.price}</span>
+            {p.originalPrice && <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: "var(--text-faint)", marginLeft: 7, textDecoration: "line-through" }}>${p.originalPrice}</span>}
+            <div style={{ fontFamily: "var(--fb)", fontSize: 10, color: "var(--text-faint)", marginTop: 1 }}>lifetime access</div>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, alignItems: "flex-end" }}>
+            {p.stripeUrl ? (
+              <a href={p.stripeUrl} target="_blank" rel="noopener noreferrer" onClick={e => e.stopPropagation()}>
+                <button className="btn-primary" style={{ padding: "9px 17px", fontSize: 12 }}>Get Access →</button>
+              </a>
+            ) : (
+              <button className="btn-primary" style={{ padding: "9px 17px", fontSize: 12 }} onClick={(e) => { e.stopPropagation(); onOpen(p); }}>Get Access →</button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// TESTIMONIALS SECTION
+// ═══════════════════════════════════════════════════════
+
+function TestimonialsSection() {
+  const [active, setActive] = useState(0);
+  const cols = [
+    [testimonials[0], testimonials[3]],
+    [testimonials[1], testimonials[4]],
+    [testimonials[2], testimonials[5]],
+  ];
+
+  return (
+    <section style={{ padding: "90px 22px", position: "relative", zIndex: 1, borderTop: "1px solid var(--border)" }}>
+      <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 56 }}>
+          <div className="badge" style={{ background: "rgba(255,255,255,.04)", color: "var(--text-dim)", border: "1px solid var(--border-bright)", marginBottom: 14 }}>RESULTS</div>
+          <h2 style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: "clamp(28px,4vw,52px)", textTransform: "uppercase", marginBottom: 12 }}>
+            Real athletes.<br /><span style={{ WebkitTextStroke: "2px var(--orange)", WebkitTextFillColor: "transparent" }}>Real results.</span>
+          </h2>
+          <p style={{ fontFamily: "var(--fb)", fontSize: 14, color: "var(--text-dim)", maxWidth: 480, margin: "0 auto" }}>
+            No cherry-picked before/afters. Just honest feedback from people who followed the programs.
+          </p>
+        </div>
+
+        {/* Desktop 3-col grid */}
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16 }} className="testimonial-grid">
+          {cols.map((col, ci) => (
+            <div key={ci} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+              {col.map((t, ti) => (
+                <div key={ti} className="surface" style={{ borderRadius: 10, padding: "22px", border: "1px solid var(--border)", transition: "border-color .2s", cursor: "default" }}
+                  onMouseEnter={e => (e.currentTarget.style.borderColor = "var(--orange-border)")}
+                  onMouseLeave={e => (e.currentTarget.style.borderColor = "var(--border)")}>
+                  {/* Stars */}
+                  <div style={{ display: "flex", gap: 2, marginBottom: 12 }}>
+                    {Array(t.rating).fill(0).map((_, i) => <Star key={i} size={12} fill="var(--orange)" stroke="none" />)}
+                  </div>
+                  {/* Quote */}
+                  <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: "rgba(255,255,255,0.72)", lineHeight: 1.65, marginBottom: 16, fontStyle: "italic" }}>"{t.result}"</p>
+                  {/* Footer */}
+                  <div style={{ display: "flex", alignItems: "center", gap: 12, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+                    <div style={{ width: 36, height: 36, borderRadius: "50%", background: `${t.avatarColor}22`, border: `1.5px solid ${t.avatarColor}55`, display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "var(--fd)", fontSize: 11, fontWeight: 900, color: t.avatarColor, flexShrink: 0 }}>{t.avatar}</div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontFamily: "var(--fd)", fontSize: 13, color: "var(--text)", fontWeight: 700 }}>{t.name}</div>
+                      <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: "var(--text-faint)" }}>{t.handle}</div>
+                    </div>
+                    <span className="badge" style={{ background: "var(--orange-dim)", color: "var(--orange)", border: "1px solid var(--orange-border)", fontSize: 8 }}>{t.program}</span>
+                  </div>
+                  <div style={{ marginTop: 10, fontFamily: "var(--fb)", fontSize: 10, color: "var(--text-faint)" }}>⏱ {t.weeks}</div>
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// FAQ SECTION
+// ═══════════════════════════════════════════════════════
+
+function FAQSection() {
+  const [open, setOpen] = useState<number | null>(null);
+  return (
+    <section style={{ padding: "90px 22px", position: "relative", zIndex: 1, borderTop: "1px solid var(--border)" }}>
+      <div style={{ maxWidth: 780, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 52 }}>
+          <div className="badge" style={{ background: "rgba(255,255,255,.04)", color: "var(--text-dim)", border: "1px solid var(--border-bright)", marginBottom: 14 }}>FAQ</div>
+          <h2 style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: "clamp(28px,4vw,52px)", textTransform: "uppercase" }}>
+            Every question.<br />Answered honestly.
+          </h2>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          {faqs.map((faq, i) => (
+            <div key={i} className="surface" style={{ borderRadius: 6, overflow: "hidden", border: `1px solid ${open === i ? "var(--orange-border)" : "var(--border)"}`, transition: "border-color .2s" }}>
+              <button onClick={() => setOpen(open === i ? null : i)}
+                style={{ width: "100%", background: "transparent", border: "none", cursor: "pointer", padding: "18px 20px", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 16, textAlign: "left" }}>
+                <span style={{ fontFamily: "var(--fd)", fontWeight: 700, fontSize: 16, color: open === i ? "var(--orange)" : "var(--text)", transition: "color .2s", lineHeight: 1.3 }}>{faq.q}</span>
+                <div style={{ width: 24, height: 24, borderRadius: "50%", border: `1.5px solid ${open === i ? "var(--orange)" : "var(--border-bright)"}`, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, transition: "all .2s", background: open === i ? "var(--orange-dim)" : "transparent" }}>
+                  {open === i ? <ChevronUp size={12} style={{ color: "var(--orange)" }} /> : <ChevronDown size={12} style={{ color: "var(--text-faint)" }} />}
+                </div>
+              </button>
+              {open === i && (
+                <div style={{ padding: "0 20px 20px" }}>
+                  <div style={{ width: "100%", height: 1, background: "var(--border)", marginBottom: 16 }} />
+                  <p style={{ fontFamily: "var(--fb)", fontSize: 14, color: "rgba(255,255,255,0.65)", lineHeight: 1.7 }}>{faq.a}</p>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Still unsure CTA */}
+        <div style={{ marginTop: 40, textAlign: "center", padding: "28px", background: "rgba(255,255,255,0.02)", border: "1px solid var(--border)", borderRadius: 8 }}>
+          <AlertCircle size={20} style={{ color: "var(--orange)", marginBottom: 10 }} />
+          <p style={{ fontFamily: "var(--fb)", fontSize: 14, color: "var(--text-dim)", marginBottom: 16 }}>Still not sure which program is right for you?</p>
+          <a href="mailto:contact@gravitylab.com">
+            <button className="btn-secondary">Ask directly →</button>
+          </a>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// BUNDLE COUNTDOWN + PRICE BREAKDOWN
+// ═══════════════════════════════════════════════════════
+
+function BundleSection({ onOpen }: { onOpen: (p: Program) => void }) {
+  const { h, m, s } = useCountdown();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const priceItems = [
+    { label: "Planche Foundation", price: 27 },
+    { label: "Planche Elite", price: 39 },
+    { label: "Front Lever Mastery", price: 29 },
+    { label: "Hybrid Athlete", price: 47 },
+    { label: "Full Hypertrophy", price: 47 },
+  ];
+  const total = priceItems.reduce((a, b) => a + b.price, 0);
+
+  return (
+    <section style={{ padding: "90px 22px", position: "relative", zIndex: 1, background: "rgba(255,69,0,0.02)", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)" }}>
+      <div style={{ maxWidth: 960, margin: "0 auto" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 48, alignItems: "center" }} className="pg2">
+          {/* Left — value breakdown */}
+          <div>
+            <div className="badge" style={{ background: "var(--orange-dim)", color: "var(--orange)", border: "1px solid var(--orange-border)", marginBottom: 18 }}>BUNDLE — BEST VALUE</div>
+            <h2 style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: "clamp(32px,4vw,52px)", textTransform: "uppercase", lineHeight: .9, marginBottom: 28 }}>
+              Everything.<br /><span style={{ WebkitTextStroke: "2px var(--orange)", WebkitTextFillColor: "transparent" }}>One price.</span>
+            </h2>
+            {/* Price breakdown */}
+            <div style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 8, overflow: "hidden", marginBottom: 20 }}>
+              {priceItems.map((item, i) => (
+                <div key={i} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 18px", borderBottom: "1px solid var(--border)" }}>
+                  <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: "var(--text-dim)" }}>
+                    <Check size={11} style={{ color: "var(--orange)", marginRight: 8, display: "inline" }} />
+                    {item.label}
+                  </span>
+                  <span style={{ fontFamily: "var(--fd)", fontSize: 15, color: "var(--text-faint)", textDecoration: "line-through" }}>${item.price}</span>
+                </div>
+              ))}
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", background: "rgba(255,69,0,0.06)", borderTop: "2px solid var(--orange-border)" }}>
+                <span style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 14, color: "var(--text)", letterSpacing: 1, textTransform: "uppercase" }}>If bought separately</span>
+                <span style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 20, color: "var(--text-faint)", textDecoration: "line-through" }}>${total}</span>
+              </div>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "14px 18px", background: "linear-gradient(90deg,rgba(255,69,0,0.12),rgba(255,69,0,0.04))" }}>
+                <div>
+                  <div style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 14, color: "var(--orange)", letterSpacing: 1, textTransform: "uppercase" }}>Bundle Price</div>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: "var(--text-faint)", marginTop: 2 }}>You save ${total - 97}</div>
+                </div>
+                <span style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 32, color: "var(--orange)" }}>$97</span>
+              </div>
             </div>
           </div>
 
-          {/* CENTER — Hero */}
-          <div className="flex-1 flex flex-col items-center justify-center px-6 py-16 text-center">
-            <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-white/[0.04] border border-white/[0.08] rounded-full mb-6 text-[9px] font-bold text-white/28 uppercase tracking-[0.15em]">
-              <span className="w-1.5 h-1.5 bg-emerald-400 rounded-full animate-pulse"/>
-              Analyse biométrique IA · 68 landmarks faciaux
-            </div>
-
-            {/* ── TITRE amélioré : plus visible, plus gros ── */}
-            <p className="text-[13px] font-black text-white/70 uppercase tracking-[0.25em] mb-3">Analyse objective de l'attractivité / beauté faciale</p>
-            <h1 className="font-black leading-none tracking-tighter mb-4" style={{fontSize:"clamp(6rem,14vw,10rem)",fontStyle:"italic",background:"linear-gradient(150deg,#ffffff 0%,#c7d2fe 40%,#818cf8 70%,#6366f1 100%)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>
-              PSL Score
-            </h1>
-
-            {/* ── Sous-titres autour du score : plus visibles ── */}
-            <div className="flex flex-col items-center gap-2 mb-4">
-              <p className="text-white/70 text-xl font-bold tracking-wide">Score biométrique décimal + potentiel de progression</p>
-              <p className="text-white/50 text-[14px] leading-relaxed">
-                Symétrie · Tiers faciaux · Canthal tilt · Jawline · Premiers résultats en <span className="text-white font-black">72h</span>
+          {/* Right — countdown + CTA */}
+          <div>
+            {/* Countdown */}
+            <div style={{ background: "var(--bg-card)", border: "1px solid var(--orange-border)", borderRadius: 10, padding: "24px", marginBottom: 20, textAlign: "center" }}>
+              <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: "var(--orange)", letterSpacing: 2, textTransform: "uppercase", marginBottom: 14 }}>⏰ Launch price expires in</div>
+              <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 14 }}>
+                {[{ label: "HRS", val: pad(h) }, { label: "MIN", val: pad(m) }, { label: "SEC", val: pad(s) }].map((unit, i) => (
+                  <div key={i} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                    <div style={{ background: "rgba(255,69,0,0.1)", border: "1px solid var(--orange-border)", borderRadius: 6, padding: "10px 14px", minWidth: 58 }}>
+                      <span style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 36, color: "var(--orange)", lineHeight: 1 }}>{unit.val}</span>
+                    </div>
+                    <span style={{ fontFamily: "var(--fb)", fontSize: 9, letterSpacing: 2, color: "var(--text-faint)" }}>{unit.label}</span>
+                  </div>
+                ))}
+              </div>
+              <p style={{ fontFamily: "var(--fb)", fontSize: 12, color: "var(--text-faint)", lineHeight: 1.55 }}>
+                After the timer runs out, the bundle returns to full price.
               </p>
             </div>
 
             {/* CTA */}
-            <div className="flex flex-col items-center gap-3 mb-8">
-              <button onClick={()=>setPage("form")} className="group flex items-center gap-4 px-12 py-5 bg-white text-black font-black text-[11px] uppercase tracking-[0.2em] rounded-full transition-all hover:scale-[1.03] hover:shadow-[0_0_80px_rgba(165,180,252,0.3)] shadow-[0_0_40px_rgba(165,180,252,0.15)]">
-                <span className="px-2.5 py-1 bg-emerald-500 text-white text-[8px] rounded-full font-black uppercase">FREE</span>
-                Analyser mon visage
-                <span className="group-hover:translate-x-1.5 transition-transform">→</span>
+            <a href={ultimateBundle.stripeUrl} target="_blank" rel="noopener noreferrer" style={{ display: "block" }}>
+              <button className="btn-primary pulse-glow" style={{ width: "100%", justifyContent: "center", padding: "16px", fontSize: 15, letterSpacing: 2 }}>
+                Get the Bundle — $97
               </button>
-              <p className="text-[10px] text-white/35 tracking-wide font-semibold">Analyse gratuite · Résultats en 45 sec · 100% local &amp; privé</p>
-            </div>
-
-            {/* Quick results timeline */}
-            <div className="w-full max-w-md grid grid-cols-3 gap-2 mb-7">
-              {[{icon:"⚡",t:"72 heures",s:"Premiers effets visibles (posture, hydratation)"},{icon:"📅",t:"2 semaines",s:"Transformation notable perçue par l'entourage"},{icon:"🏆",t:"3 mois",s:"Nouveau niveau physique permanent"},].map((item,i)=>(
-                <div key={i} className="p-3 bg-white/[0.025] border border-white/[0.05] rounded-xl text-center">
-                  <div className="text-lg mb-1">{item.icon}</div>
-                  <p className="text-[12px] font-black text-white">{item.t}</p>
-                  <p className="text-[9px] text-white/35 mt-0.5 leading-snug">{item.s}</p>
-                </div>
+            </a>
+            <div style={{ display: "flex", gap: 16, marginTop: 14, justifyContent: "center", flexWrap: "wrap" }}>
+              {["Lifetime access", "30-day guarantee", "Instant delivery"].map((t, i) => (
+                <span key={i} style={{ fontFamily: "var(--fb)", fontSize: 11, color: "var(--text-faint)", display: "flex", alignItems: "center", gap: 5 }}>
+                  <Check size={10} style={{ color: "var(--orange)" }} />{t}
+                </span>
               ))}
             </div>
-
-            {/* Scale bubble — DETAILED */}
-            <div className="w-full max-w-md p-6 bg-white/[0.022] border border-white/[0.05] rounded-2xl text-left">
-              <div className="flex items-center gap-2 mb-4">
-                <span className="text-xl">📐</span>
-                <div>
-                  <p className="text-[11px] font-black text-white/60 uppercase tracking-[0.15em]">L'Échelle PSL — Mode d'emploi</p>
-                  <p className="text-[9px] text-white/30 mt-0.5">68 landmarks · Science-based · Décimale 1–10</p>
-                </div>
-              </div>
-
-              {/* What is PSL */}
-              <p className="text-[12px] text-white/55 leading-relaxed mb-4">
-                L'Échelle PSL (<span className="text-white font-black">Pretty, Sexy, Looks</span>) est un système de notation de l'attractivité faciale calibré sur la géométrie faciale objective. Contrairement à une opinion subjective, elle repose sur des mesures biométriques précises : symétrie (Rhodes, 2006), tiers faciaux doriens (Marquardt, 2002), canthal tilt, ratio jawline et qualité cutanée.
-              </p>
-
-              {/* Score bands detailed */}
-              <div className="space-y-2 mb-4">
-                {[
-                  {band:PSL_BANDS[0], desc:"Difficultés d'attractivité marquées. Des améliorations significatives sont possibles avec les bons changements."},
-                  {band:PSL_BANDS[1], desc:"La majorité de la population. Une base solide avec un fort potentiel d'amélioration accessible."},
-                  {band:PSL_BANDS[2], desc:"Au-dessus de la moyenne. Tu attires l'attention — optimiser quelques critères peut te faire sauter de catégorie."},
-                  {band:PSL_BANDS[3], desc:"Clairement séduisant·e. L'effet de halo commence à jouer fortement en ta faveur dans toutes les sphères sociales."},
-                  {band:PSL_BANDS[4], desc:"Top 15% — niveau mannequin non professionnel. Attractivité immédiatement perçue par tous."},
-                  {band:PSL_BANDS[5], desc:"Top 5% — niveau élite. Avantage compétitif massif dans la vie amoureuse, sociale et professionnelle."},
-                  {band:PSL_BANDS[6], desc:"Top 2% — exceptionnel. Génétique rare + optimisation maximale. Très peu de personnes atteignent ce niveau."},
-                  {band:PSL_BANDS[7], desc:"Top 1% — quasi-inaccessible. Combinaison unique de traits parfaits et proportion dorienne idéale."},
-                ].map((item,i)=>(
-                  <div key={i} className="flex gap-3 p-2.5 rounded-xl" style={{background:item.band.color+"08",border:`1px solid ${item.band.color}18`}}>
-                    <div className="flex-shrink-0 flex flex-col items-center gap-0.5 w-14">
-                      <span className="text-lg">{item.band.emoji}</span>
-                      <span className="text-[10px] font-black" style={{color:item.band.color}}>{item.band.min}–{item.band.max===10?"10":item.band.max}</span>
-                      <span className="text-[8px] text-white/25">{item.band.topPercent}</span>
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-[10px] font-black mb-0.5" style={{color:item.band.color}}>{item.band.label}</p>
-                      <p className="text-[10px] text-white/40 leading-relaxed">{item.desc}</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-
-              {/* Scientific basis */}
-              <div className="p-3 bg-white/[0.02] border border-white/[0.04] rounded-xl mb-3">
-                <p className="text-[9px] font-black text-white/35 uppercase tracking-wider mb-2">🔬 Critères mesurés par notre IA</p>
-                <div className="grid grid-cols-2 gap-1.5">
-                  {[
-                    {k:"Symétrie faciale",v:"25% du score"},
-                    {k:"Score yeux",v:"20% du score"},
-                    {k:"Tiers faciaux",v:"15% du score"},
-                    {k:"Jawline / Menton",v:"15% du score"},
-                    {k:"Canthal tilt",v:"10% du score"},
-                    {k:"Lèvres",v:"8% du score"},
-                    {k:"Qualité détection",v:"7% du score"},
-                  ].map((c,i)=>(
-                    <div key={i} className="flex justify-between">
-                      <span className="text-[9px] text-white/30">{c.k}</span>
-                      <span className="text-[9px] font-black text-indigo-400/70">{c.v}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              <p className="text-[9px] text-white/22 italic leading-relaxed">
-                ⚠️ L'échelle PSL est un outil de mesure de l'attractivité perçue basé sur des normes évolutives moyennes. Elle ne définit pas ta valeur en tant que personne.
-              </p>
-            </div>
-
-            {/* Mobile reviews */}
-            <div className="lg:hidden mt-8 grid grid-cols-2 gap-3 w-full max-w-sm">
-              {REVIEWS.slice(0,4).map((r,i)=>(
-                <div key={i} className="p-3 bg-white/[0.02] border border-white/[0.04] rounded-xl">
-                  <div className="flex items-center gap-1.5 mb-1.5">
-                    <div className="w-5 h-5 rounded-full flex items-center justify-center text-[7px] font-black" style={{background:r.color+"30"}}>{r.avatar[0]}</div>
-                    <span className="text-[8px] font-black text-white/45 truncate">{r.name}</span>
-                    <span className="ml-auto text-[10px] font-black" style={{color:r.color}}>{r.score}</span>
-                  </div>
-                  <div className="flex gap-0.5 mb-1">{[...Array(r.stars)].map((_,j)=><span key={j} className="text-yellow-400 text-[7px]">★</span>)}</div>
-                  <p className="text-[8px] text-white/28 leading-relaxed">"{r.text.slice(0,65)}..."</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* RIGHT — Arguments */}
-          <div className="hidden lg:flex flex-col gap-3 w-72 xl:w-80 flex-shrink-0 p-8 pt-16 border-l border-white/[0.04] overflow-y-auto">
-            <div className="text-[8px] font-black text-white/20 uppercase tracking-[0.2em] mb-2">Pourquoi faire ce test</div>
-            <div className="p-4 rounded-2xl border border-emerald-500/22 bg-emerald-500/6">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-xl">⚡</span>
-                <div>
-                  <p className="text-[10px] font-black text-emerald-400">Résultats dès 72h</p>
-                  <p className="text-[8px] text-white/22 font-bold uppercase tracking-wider">Visibles en quelques jours</p>
-                </div>
-              </div>
-              <p className="text-[9px] text-white/38 leading-relaxed">Posture (immédiat), hydratation &amp; rétention d'eau (<span className="text-white font-black">72h</span>), skincare (<span className="text-white font-black">2 semaines</span>). Une transformation durable en <span className="text-white font-black">3 mois</span>.</p>
-            </div>
-            {RIGHT_ARGS.map((a,i)=>(
-              <div key={i} className="p-4 bg-white/[0.022] border border-white/[0.04] rounded-2xl hover:border-white/[0.07] transition-all">
-                <div className="flex items-center gap-2 mb-2">
-                  <span className="text-xl">{a.icon}</span>
-                  <div>
-                    <p className="text-[10px] font-black" style={{color:a.color}}>{a.title}</p>
-                    <p className="text-[8px] text-white/22 font-bold uppercase tracking-wider">{a.sub}</p>
-                  </div>
-                </div>
-                <p className="text-[9px] text-white/35 leading-relaxed">{a.text}</p>
-              </div>
-            ))}
           </div>
         </div>
-      </main>
-    );
-  }
+      </div>
+    </section>
+  );
+}
 
-  // ─── FORM ─────────────────────────────────────────────────────────────────
-  if(page==="form"){
-    return(
-      <main className="min-h-screen bg-[#06060c] text-white flex flex-col items-center justify-center px-4" style={{fontFamily:"'Helvetica Neue',Arial,sans-serif"}}>
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_50%_40%_at_50%_0%,rgba(99,102,241,0.09),transparent)]"/>
-        <div className="relative z-10 w-full max-w-sm">
-          <button onClick={()=>setPage("landing")} className="text-white/20 hover:text-white/50 text-[10px] font-black uppercase tracking-[0.15em] mb-12 flex items-center gap-2 transition-colors">← Retour</button>
-          <h2 className="text-5xl font-black italic tracking-tighter mb-1">Profil</h2>
-          <p className="text-white/22 text-sm mb-10">Calibrage de l'analyse biométrique</p>
-          <div className="space-y-6">
-            <div>
-              <label className="text-[9px] font-black text-white/25 uppercase tracking-[0.15em] block mb-3">Genre</label>
-              <div className="grid grid-cols-2 gap-3">
-                {["Femme","Homme"].map(g=>(
-                  <button key={g} onClick={()=>setGender(g)} className={`py-4 rounded-2xl font-black text-xs uppercase tracking-wider transition-all ${gender===g?"bg-white text-black scale-[1.02]":"bg-white/[0.03] text-white/35 border border-white/[0.06] hover:bg-white/[0.07]"}`}>{g}</button>
+// ═══════════════════════════════════════════════════════
+// CATEGORY SECTION
+// ═══════════════════════════════════════════════════════
+
+function CatSection({ label, sublabel, progs, onOpen }: { label: string; sublabel: string; progs: Program[]; onOpen: (p: Program) => void }) {
+  return (
+    <div style={{ marginBottom: 64 }}>
+      <div style={{ marginBottom: 28 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 6 }}>
+          <div style={{ width: 4, height: 28, background: "var(--orange)", borderRadius: 2, flexShrink: 0 }} />
+          <h2 style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: "clamp(26px,3.5vw,40px)", textTransform: "uppercase", color: "var(--text)" }}>{label}</h2>
+        </div>
+        <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: "var(--text-faint)", marginLeft: 18 }}>{sublabel}</p>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: `repeat(${Math.min(progs.length, 3)}, 1fr)`, gap: 18 }} className="pg3">
+        {progs.map(p => <ProgramCard key={p.id} program={p} onOpen={onOpen} />)}
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// QUIZ SECTION (with urgency result page)
+// ═══════════════════════════════════════════════════════
+
+function QuizSection({ onOpen }: { onOpen: (p: Program) => void }) {
+  const [step, setStep] = useState(0);
+  const [answers, setAnswers] = useState<number[]>([]);
+  const [result, setResult] = useState<Program | null>(null);
+  const [quizTimer, setQuizTimer] = useState(900); // 15 min countdown on result
+  const [timerStarted, setTimerStarted] = useState(false);
+
+  useEffect(() => {
+    if (!timerStarted || quizTimer <= 0) return;
+    const id = setInterval(() => setQuizTimer(t => t - 1), 1000);
+    return () => clearInterval(id);
+  }, [timerStarted, quizTimer]);
+
+  const questions = [
+    {
+      q: "What is your current physical level?",
+      opts: [
+        "Beginner — just starting out with training",
+        "Intermediate — a few months of consistent training",
+        "Advanced — training for over a year",
+        "Expert — I already have some skills (tuck planche, tuck front lever...)",
+      ],
+    },
+    {
+      q: "What is your main goal?",
+      opts: [
+        "Learn calisthenics skills (planche, front lever...)",
+        "Build an aesthetic, muscular physique",
+        "Both — skills AND physique",
+        "Everything — the complete package",
+      ],
+    },
+    {
+      q: "What equipment do you have access to?",
+      opts: [
+        "Nothing — just the floor and my bodyweight",
+        "Pull-up bar + parallettes",
+        "Full gym access",
+        "Everything — home setup AND gym",
+      ],
+    },
+  ];
+
+  const getRecommendation = (ans: number[]): Program => {
+    const [level, goal, equip] = ans;
+    if (goal === 3 || equip === 3) return ultimateBundle;
+    if (goal === 0) {
+      if (level <= 1) return plancheFoundation;
+      if (level === 2) return frontLeverMastery;
+      return plancheElite;
+    }
+    if (goal === 1) return fullHypertrophy;
+    if (goal === 2) return hybridAthlete;
+    return plancheFoundation;
+  };
+
+  const handleAnswer = (idx: number) => {
+    const newAnswers = [...answers, idx];
+    if (step < questions.length - 1) {
+      setAnswers(newAnswers);
+      setStep(step + 1);
+    } else {
+      const rec = getRecommendation(newAnswers);
+      setResult(rec);
+      setTimerStarted(true);
+    }
+  };
+
+  const reset = () => { setStep(0); setAnswers([]); setResult(null); setQuizTimer(900); setTimerStarted(false); };
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const timerMin = Math.floor(quizTimer / 60);
+  const timerSec = quizTimer % 60;
+  const timerExpired = quizTimer <= 0;
+
+  return (
+    <section style={{ padding: "80px 22px", position: "relative", zIndex: 1, background: "rgba(255,69,0,0.02)", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)" }}>
+      <div style={{ maxWidth: 720, margin: "0 auto" }}>
+        <div style={{ textAlign: "center", marginBottom: 44 }}>
+          <div className="badge" style={{ background: "rgba(255,255,255,.04)", color: "var(--text-dim)", border: "1px solid var(--border-bright)", marginBottom: 14 }}>🎯 FIND YOUR PROGRAM</div>
+          <h2 style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: "clamp(28px,4vw,50px)", textTransform: "uppercase" }}>Which program<br />is right for you?</h2>
+          <p style={{ fontFamily: "var(--fb)", fontSize: 14, color: "var(--text-dim)", marginTop: 12 }}>Answer 3 questions — we'll guide you to the right starting point.</p>
+        </div>
+
+        {result ? (
+          <div>
+            {/* Urgency timer banner */}
+            {!timerExpired ? (
+              <div style={{ background: "rgba(255,69,0,0.1)", border: "1px solid var(--orange-border)", borderRadius: 6, padding: "12px 18px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
+                <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: "var(--text-dim)" }}>
+                  🔥 <strong style={{ color: "var(--text)" }}>Personal offer active</strong> — discounted price reserved for <strong style={{ color: "var(--orange)" }}>{pad(timerMin)}:{pad(timerSec)}</strong>
+                </span>
+                <span className="badge" style={{ background: "var(--orange-dim)", color: "var(--orange)", border: "1px solid var(--orange-border)", fontSize: 9 }}>LIMITED</span>
+              </div>
+            ) : (
+              <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--border)", borderRadius: 6, padding: "12px 18px", marginBottom: 20 }}>
+                <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: "var(--text-faint)" }}>Offer expired — standard pricing applies.</span>
+              </div>
+            )}
+
+            <div style={{ marginBottom: 8, fontFamily: "var(--fd)", fontSize: 13, letterSpacing: 2, color: "var(--text-faint)", textTransform: "uppercase", textAlign: "center" }}>Your perfect match</div>
+            <div className="surface" style={{ borderRadius: 12, padding: "32px", border: `2px solid ${result.levelColor}40`, background: `${result.glowColor}`, marginBottom: 24, textAlign: "left", position: "relative", overflow: "hidden" }}>
+              <div style={{ position: "absolute", top: -20, right: -20, fontSize: 100, opacity: 0.07 }}>{result.icon}</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 16, marginBottom: 16 }}>
+                <span style={{ fontSize: 40 }}>{result.icon}</span>
+                <div>
+                  <div className="t-display" style={{ fontSize: 26 }}>{result.title}</div>
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 13, color: "var(--text-dim)", marginTop: 3 }}>{result.subtitle}</div>
+                </div>
+                <span className="badge" style={{ marginLeft: "auto", background: `${result.levelColor}20`, color: result.levelColor, border: `1px solid ${result.levelColor}40`, fontSize: 10 }}>{result.level}</span>
+              </div>
+              <p style={{ fontFamily: "var(--fb)", fontSize: 14, color: "var(--text-dim)", lineHeight: 1.65, marginBottom: 20 }}>{result.tagline}</p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 24 }}>
+                {result.goals.slice(0, 3).map((g, i) => (
+                  <div key={i} style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                    <Check size={11} style={{ color: "var(--orange)", marginTop: 3, flexShrink: 0 }} />
+                    <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: "rgba(255,255,255,0.6)" }}>{g}</span>
+                  </div>
+                ))}
+              </div>
+
+              {/* Price + urgency */}
+              <div style={{ background: "rgba(0,0,0,0.2)", borderRadius: 8, padding: "16px", marginBottom: 20, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 12 }}>
+                <div>
+                  <span style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 38, color: "var(--orange)" }}>${result.price}</span>
+                  {result.originalPrice && <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: "var(--text-faint)", marginLeft: 8, textDecoration: "line-through" }}>${result.originalPrice}</span>}
+                  <div style={{ fontFamily: "var(--fb)", fontSize: 11, color: "var(--text-faint)", marginTop: 2 }}>one-time · lifetime access</div>
+                </div>
+                {!timerExpired && (
+                  <div style={{ textAlign: "right" }}>
+                    <div style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 22, color: "var(--orange)", fontVariantNumeric: "tabular-nums" }}>{pad(timerMin)}:{pad(timerSec)}</div>
+                    <div style={{ fontFamily: "var(--fb)", fontSize: 10, color: "var(--text-faint)", letterSpacing: 1 }}>OFFER EXPIRES</div>
+                  </div>
+                )}
+              </div>
+
+              <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
+                {result.stripeUrl ? (
+                  <a href={result.stripeUrl} target="_blank" rel="noopener noreferrer" style={{ flex: 1 }}>
+                    <button className="btn-primary" style={{ width: "100%", justifyContent: "center" }}>
+                      Get Access — ${result.price} →
+                    </button>
+                  </a>
+                ) : (
+                  <button className="btn-primary" style={{ flex: 1 }} onClick={() => onOpen(result)}>
+                    View Program — ${result.price}
+                  </button>
+                )}
+                <button className="btn-ghost" onClick={reset}>← Retake</button>
+              </div>
+            </div>
+
+            {/* Also consider */}
+            {result.category !== "bundle" && (
+              <div style={{ textAlign: "center" }}>
+                <p style={{ fontFamily: "var(--fb)", fontSize: 13, color: "var(--text-faint)", marginBottom: 12 }}>Want everything for the best value?</p>
+                <a href={ultimateBundle.stripeUrl} target="_blank" rel="noopener noreferrer">
+                  <button className="btn-secondary">👑 Get the Bundle — $97 (save $92)</button>
+                </a>
+              </div>
+            )}
+          </div>
+        ) : (
+          <div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "center", marginBottom: 32 }}>
+              {questions.map((_, i) => (
+                <div key={i} style={{ width: i === step ? 24 : 8, height: 8, borderRadius: 4, background: i < step ? "var(--orange)" : i === step ? "var(--orange)" : "var(--border)", transition: "all .3s" }} />
+              ))}
+            </div>
+            <div className="surface" style={{ borderRadius: 12, padding: "32px 28px", border: "1px solid var(--border-bright)" }}>
+              <div className="t-label" style={{ color: "var(--text-faint)", fontSize: 9, marginBottom: 10 }}>Question {step + 1} / {questions.length}</div>
+              <h3 className="t-display" style={{ fontSize: "clamp(18px,3vw,26px)", marginBottom: 28, lineHeight: 1.2 }}>{questions[step].q}</h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {questions[step].opts.map((opt, i) => (
+                  <button key={i} onClick={() => handleAnswer(i)}
+                    style={{ padding: "14px 18px", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg-card)", color: "var(--text-dim)", cursor: "pointer", fontFamily: "var(--fb)", fontSize: 14, textAlign: "left", transition: "all .2s" }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--orange)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = "var(--border)"; (e.currentTarget as HTMLButtonElement).style.color = "var(--text-dim)"; }}>
+                    <span style={{ color: "var(--orange)", fontFamily: "var(--fd)", marginRight: 10 }}>{String.fromCharCode(65 + i)}.</span>
+                    {opt}
+                  </button>
                 ))}
               </div>
             </div>
-            <div>
-              <label className="text-[9px] font-black text-white/25 uppercase tracking-[0.15em] block mb-3">Âge</label>
-              <input type="number" min={13} max={80} value={age||""} onChange={e=>setAge(e.target.value?parseInt(e.target.value):null)} placeholder="Ton âge" className="w-full py-4 px-5 bg-white/[0.03] border border-white/[0.06] rounded-2xl text-white font-black text-center text-2xl placeholder-white/12 focus:outline-none focus:border-white/20 transition-all"/>
+            {step > 0 && (
+              <button className="btn-ghost" style={{ marginTop: 14, fontSize: 12 }} onClick={() => { setStep(step - 1); setAnswers(answers.slice(0, -1)); }}>
+                ← Back
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+// ═══════════════════════════════════════════════════════
+// MAIN APP
+// ═══════════════════════════════════════════════════════
+
+const CSS = `
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,600;0,700;1,400&family=Barlow+Condensed:wght@400;700;900&family=Barlow:wght@300;400;500;600&display=swap');
+:root {
+  --orange:#FF4500;--orange-dim:rgba(255,69,0,.1);--orange-border:rgba(255,69,0,.28);
+  --bg:#0A0A0A;--bg-card:#111;--bg-card2:#141414;
+  --border:rgba(255,255,255,.07);--border-bright:rgba(255,255,255,.14);
+  --text:#FFF;--text-dim:rgba(255,255,255,.5);--text-faint:rgba(255,255,255,.25);
+  --fd:'Barlow Condensed',Impact,sans-serif;--fb:'Barlow',sans-serif;--fs:'Cormorant Garamond',Georgia,serif;
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:var(--fb);overflow-x:hidden;-webkit-font-smoothing:antialiased}
+.noise{position:fixed;inset:0;opacity:.02;pointer-events:none;z-index:500;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");background-size:180px}
+.grid-bg{position:fixed;inset:0;pointer-events:none;z-index:0;background-image:linear-gradient(rgba(255,255,255,.016) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.016) 1px,transparent 1px);background-size:64px 64px}
+.glass{background:rgba(255,255,255,.03);backdrop-filter:blur(20px);border:1px solid var(--border);border-radius:6px}
+.surface{background:var(--bg-card);border:1px solid var(--border);border-radius:6px}
+.surface-2{background:var(--bg-card2);border:1px solid var(--border);border-radius:6px}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:3px 9px;font-size:10px;font-weight:700;letter-spacing:1.8px;text-transform:uppercase;border-radius:2px;font-family:var(--fb);white-space:nowrap}
+.btn-primary{background:var(--orange);color:#fff;border:none;padding:12px 26px;font-family:var(--fd);font-weight:700;font-size:13px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;transition:all .2s;border-radius:2px;display:inline-flex;align-items:center;gap:8px}
+.btn-primary:hover{background:#ff6030;transform:translateY(-1px);box-shadow:0 8px 24px rgba(255,69,0,.4)}
+.btn-secondary{background:transparent;color:var(--orange);border:1px solid var(--orange-border);padding:11px 22px;font-family:var(--fd);font-weight:700;font-size:13px;letter-spacing:1.8px;text-transform:uppercase;cursor:pointer;transition:all .2s;border-radius:2px;display:inline-flex;align-items:center;gap:7px}
+.btn-secondary:hover{background:var(--orange-dim)}
+.btn-ghost{background:transparent;color:var(--text-dim);border:1px solid var(--border-bright);padding:9px 16px;font-family:var(--fd);font-weight:600;font-size:12px;letter-spacing:2px;text-transform:uppercase;cursor:pointer;transition:all .2s;border-radius:2px;display:inline-flex;align-items:center;gap:7px}
+.btn-ghost:hover{color:var(--text);border-color:rgba(255,255,255,.28)}
+.card-lift{transition:transform .3s cubic-bezier(.4,0,.2,1),border-color .3s,box-shadow .3s;cursor:pointer}
+.card-lift:hover{transform:translateY(-5px);border-color:var(--orange-border)!important;box-shadow:0 20px 56px rgba(255,69,0,.14)}
+.progress-bar{height:3px;background:rgba(255,255,255,.06);border-radius:3px;overflow:hidden}
+.progress-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,var(--orange),#ff8c00);transition:width .8s cubic-bezier(.4,0,.2,1)}
+.track-toggle{display:flex;background:rgba(255,255,255,.04);border:1px solid var(--border-bright);border-radius:4px;overflow:hidden}
+.track-btn{padding:9px 18px;font-family:var(--fd);font-size:12px;font-weight:700;letter-spacing:2px;text-transform:uppercase;cursor:pointer;border:none;transition:all .2s;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.track-btn.active{background:var(--orange);color:#fff}
+.track-btn:not(.active){background:transparent;color:var(--text-dim)}
+.track-btn:not(.active):hover{background:rgba(255,255,255,.05);color:var(--text)}
+.check-row{transition:background .18s,border-color .18s;cursor:pointer}
+.check-row:hover{background:rgba(255,69,0,.04)!important}
+.data-table{width:100%;border-collapse:collapse;font-family:var(--fb);font-size:13px}
+.data-table th{padding:11px 16px;text-align:left;font-size:10px;letter-spacing:2px;color:var(--text-faint);text-transform:uppercase;font-weight:600;border-bottom:1px solid var(--border);background:rgba(255,255,255,.02)}
+.data-table td{padding:13px 16px;border-bottom:1px solid rgba(255,255,255,.04);color:rgba(255,255,255,.7);vertical-align:top}
+.data-table tr:last-child td{border-bottom:none}
+.data-table tr:hover td{background:rgba(255,69,0,.03)}
+.section-line{display:flex;align-items:center;gap:16px;margin-bottom:28px}
+.section-line .ln{flex:1;height:1px;background:var(--border)}
+.section-line .dot{width:5px;height:5px;background:var(--orange);border-radius:50%;flex-shrink:0}
+@keyframes fadeUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+@keyframes flicker{0%,100%{opacity:1}91%{opacity:1}92%{opacity:.7}93%{opacity:1}97%{opacity:1}98%{opacity:.82}99%{opacity:1}}
+@keyframes pulseGlow{0%,100%{box-shadow:0 0 20px rgba(255,69,0,.3)}50%{box-shadow:0 0 44px rgba(255,69,0,.6)}}
+.fade-up{animation:fadeUp .5s ease both}
+.flicker{animation:flicker 5s ease-in-out infinite}
+.pulse-glow{animation:pulseGlow 2.6s ease-in-out infinite}
+.t-display{font-family:var(--fd);font-weight:900;text-transform:uppercase;letter-spacing:-.02em}
+.t-label{font-family:var(--fb);font-size:11px;font-weight:700;letter-spacing:2.5px;text-transform:uppercase}
+.t-body{font-family:var(--fb);font-weight:400;line-height:1.65}
+.t-serif{font-family:var(--fs)}
+.section-divider{display:flex;align-items:center;gap:16px;margin-bottom:28px}
+.section-divider .line{flex:1;height:1px;background:var(--border)}
+.section-divider .dot{width:5px;height:5px;background:var(--orange);border-radius:50%;flex-shrink:0}
+@media(max-width:768px){
+  .pg3{grid-template-columns:1fr!important}
+  .pg2{grid-template-columns:1fr!important}
+  .ex-grid{grid-template-columns:1fr!important}
+  .dash-head{flex-direction:column!important;align-items:flex-start!important;gap:14px!important}
+  .hero-title{font-size:clamp(60px,17vw,110px)!important}
+  .track-btn{padding:8px 12px!important;font-size:11px!important}
+  .testimonial-grid{grid-template-columns:1fr!important}
+}
+@media print{
+  .no-print,.noise,.grid-bg,nav,footer,.track-toggle,
+  .btn-primary,.btn-secondary,.btn-ghost,.progress-bar{display:none!important}
+  *{background:#fff!important;color:#111!important;box-shadow:none!important;animation:none!important;border-color:#ddd!important}
+  html,body{font-size:11pt;line-height:1.55;font-family:Georgia,serif}
+  @page{size:A4;margin:22mm 20mm}
+  .print-cover{display:flex!important;flex-direction:column!important;justify-content:center!important;min-height:230mm!important;page-break-after:always!important}
+  .print-h1{font-family:'Cormorant Garamond',Georgia,serif!important;font-size:40pt!important;font-weight:700!important}
+  .print-h2{font-family:'Cormorant Garamond',Georgia,serif!important;font-size:20pt!important;border-bottom:2px solid #FF4500!important;padding-bottom:5px!important;margin-bottom:14pt!important}
+}
+`;
+
+export default function App() {
+  const [page, setPage] = useState<"landing" | "dash">("landing");
+  const [active, setActive] = useState<Program | null>(null);
+  const [justPaid, setJustPaid] = useState(false);
+
+  // ── Read ?program= param on load (after Stripe redirect) ──
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const programId = params.get("program");
+    const paid = params.get("paid");
+
+    if (programId) {
+      const found = PROGRAMS.find(p => p.id === programId);
+      if (found) {
+        setActive(found);
+        setPage("dash");
+        if (paid === "true") setJustPaid(true);
+        // Clean URL without reload
+        window.history.replaceState({}, "", window.location.pathname);
+      }
+    }
+  }, []);
+
+  const openProg = (p: Program) => {
+    setActive(p);
+    setPage("dash");
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  if (page === "dash" && active) {
+    return (
+      <>
+        <style>{CSS}</style>
+
+        {/* ── Post-payment welcome banner ── */}
+        {justPaid && (
+          <div style={{
+            position: "fixed", top: 0, left: 0, right: 0, zIndex: 999,
+            background: "linear-gradient(90deg, #22c55e, #16a34a)",
+            padding: "14px 24px", display: "flex", alignItems: "center",
+            justifyContent: "space-between", gap: 16, flexWrap: "wrap",
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span style={{ fontSize: 20 }}>🎉</span>
+              <div>
+                <div style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 15, color: "#fff", letterSpacing: 1 }}>
+                  Payment confirmed — welcome to {active.title}!
+                </div>
+                <div style={{ fontFamily: "var(--fb)", fontSize: 12, color: "rgba(255,255,255,0.8)", marginTop: 2 }}>
+                  Your full program is unlocked below. Bookmark this page for future access.
+                </div>
+              </div>
             </div>
-            <button onClick={()=>{if(gender&&age)setPage("analysis");}} className={`w-full py-5 font-black text-[11px] uppercase tracking-[0.15em] rounded-2xl transition-all ${gender&&age?"bg-white text-black hover:scale-[1.01]":"bg-white/[0.03] text-white/12 cursor-not-allowed"}`}>
-              Continuer →
+            <button onClick={() => setJustPaid(false)}
+              style={{ background: "rgba(255,255,255,0.2)", border: "1px solid rgba(255,255,255,0.3)", color: "#fff", padding: "6px 14px", borderRadius: 4, cursor: "pointer", fontFamily: "var(--fd)", fontSize: 11, letterSpacing: 1 }}>
+              ✕ Close
             </button>
           </div>
-        </div>
-      </main>
+        )}
+
+        {active.category === "bundle"
+          ? <BundleDashboard program={active} onBack={() => { setPage("landing"); setJustPaid(false); window.scrollTo({ top: 0 }); }} />
+          : <Dashboard program={active} onBack={() => { setPage("landing"); setJustPaid(false); window.scrollTo({ top: 0 }); }} />
+        }
+      </>
     );
   }
 
-  // ─── ANALYSIS ─────────────────────────────────────────────────────────────
-  if(page==="analysis"){
-    return(
-      <main className="min-h-screen bg-[#06060c] text-white flex flex-col items-center justify-center px-4" style={{fontFamily:"'Helvetica Neue',Arial,sans-serif"}}>
-        <style>{CSS}</style>
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_40%_40%_at_50%_50%,rgba(99,102,241,0.06),transparent)]"/>
-        <div className="relative z-10 w-full max-w-sm">
-          {!analyzing&&<button onClick={()=>setPage("form")} className="text-white/20 hover:text-white/50 text-[10px] font-black uppercase tracking-[0.15em] mb-10 flex items-center gap-2 transition-colors">← Retour</button>}
+  const skillProgs = PROGRAMS.filter(p => p.category === "skill");
+  const hybridProgs = PROGRAMS.filter(p => p.category === "hybrid");
+  const hypertrophyProgs = PROGRAMS.filter(p => p.category === "hypertrophy");
+  const bundleProg = PROGRAMS.find(p => p.category === "bundle")!;
 
-          {/* ── Titre Scan mis en avant ── */}
-          <h2 className="text-6xl font-black italic tracking-tighter mb-2">Scan</h2>
-          <p className="text-white/55 text-base font-semibold mb-1">Photo de face · lumière naturelle · expression neutre</p>
-          <p className="text-white/30 text-[12px] mb-8">Pour un résultat précis : cadre ton visage en entier, fond neutre recommandé</p>
+  return (
+    <div style={{ background: "var(--bg)", color: "var(--text)", minHeight: "100vh" }}>
+      <style>{CSS}</style>
+      <div className="noise" /><div className="grid-bg" />
 
-          <div className="relative w-full aspect-square rounded-3xl border border-white/[0.06] bg-white/[0.01] overflow-hidden mb-5">
-            {imageUrl&&<img src={imageUrl} className={`w-full h-full object-cover ${analyzing&&interimLandmarks?"opacity-0":"opacity-100"} transition-opacity`} alt="scan"/>}
-            {imageUrl&&analyzing&&interimLandmarks&&<LandmarkOverlay imageUrl={imageUrl} landmarks={interimLandmarks} progress={progress}/>}
-            {analyzing&&<div className="absolute inset-0 overflow-hidden pointer-events-none"><div className="scanline"/></div>}
-            {analyzing&&(
-              <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] flex flex-col items-end justify-end p-5">
-                <div className="w-full space-y-3">
-                  <div className="h-[2px] w-full bg-white/10 rounded-full overflow-hidden">
-                    <div className="h-full bg-indigo-400 transition-all duration-700 rounded-full" style={{width:`${progress}%`,boxShadow:"0 0 10px rgba(99,102,241,0.8)"}}/>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="text-[9px] text-white/55 font-bold uppercase tracking-widest">{analysisStep}</span>
-                    <span className="text-[9px] text-indigo-400 font-black">{progress}%</span>
-                  </div>
-                  <div className="flex gap-1.5">
-                    {[...Array(9)].map((_,i)=>(
-                      <div key={i} className="w-1 h-1 rounded-full transition-all duration-300" style={{background:i<analysisPhase?"#6366f1":i===analysisPhase?"white":"rgba(255,255,255,0.12)",boxShadow:i===analysisPhase?"0 0 6px white":"none",animation:i===analysisPhase?"pdot 0.8s ease-in-out infinite":"none"}}/>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-            {!imageUrl&&(
-              <label className="absolute inset-0 flex flex-col items-center justify-center gap-4 cursor-pointer group">
-                <div className="w-16 h-16 rounded-full bg-white/[0.06] flex items-center justify-center group-hover:bg-white/[0.1] transition-all border border-white/[0.1]">
-                  <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-white/50"><path d="M12 16.5v-9M8.25 12l3.75-3.75L15.75 12"/><path d="M3.75 18.75a2.25 2.25 0 002.25 2.25h12a2.25 2.25 0 002.25-2.25v-7.5A2.25 2.25 0 0018 9h-1.5a.75.75 0 01-.53-.22l-2.47-2.47A2.25 2.25 0 0011.91 6h-1.82A2.25 2.25 0 008.5 6.66l-2.47 2.47A.75.75 0 015.5 9H3.75A2.25 2.25 0 001.5 11.25v7.5"/></svg>
-                </div>
-                {/* ── Texte sous le rectangle mis en avant ── */}
-                <div className="text-center">
-                  <p className="text-[15px] text-white/70 font-black uppercase tracking-widest mb-1">Déposer ta photo ici</p>
-                  <p className="text-[12px] text-white/45 font-semibold">ou clique pour importer depuis ta galerie</p>
-                  <p className="text-[10px] text-white/25 mt-2">JPG, PNG, HEIC · Face visible · Bonne luminosité</p>
-                </div>
-                <input type="file" className="hidden" accept="image/*" onChange={handleImage}/>
-              </label>
-            )}
-            {imageUrl&&!analyzing&&(
-              <label className="absolute inset-0 cursor-pointer opacity-0 hover:opacity-100 transition-opacity bg-black/40 flex items-center justify-center">
-                <span className="text-[10px] text-white font-black uppercase tracking-widest">Changer de photo</span>
-                <input type="file" className="hidden" accept="image/*" onChange={handleImage}/>
-              </label>
-            )}
-          </div>
-
-          {/* ── Texte sous "Scan appareil" mis en avant ── */}
-          {!imageUrl&&(
-            <div className="mb-5 p-4 bg-white/[0.03] border border-white/[0.07] rounded-2xl text-center">
-              <p className="text-[13px] text-white/65 font-bold mb-1">📱 Scan depuis ton appareil</p>
-              <p className="text-[11px] text-white/40 leading-relaxed">Utilise la caméra frontale de ton téléphone pour une photo nette. Évite le contre-jour et les flous. Résultats plus précis avec un fond uni.</p>
-            </div>
-          )}
-
-          {error&&<div className="p-4 bg-red-500/6 border border-red-500/15 rounded-2xl mb-4 text-center"><p className="text-red-400 text-sm font-bold">{error}</p></div>}
-          {loadingModels&&<p className="text-white/18 text-[10px] text-center font-black uppercase tracking-widest mb-4 animate-pulse">Chargement des modèles IA...</p>}
-          <button onClick={runAnalysis} disabled={!imageEl||!modelsLoaded||analyzing} className={`w-full py-5 font-black text-[11px] uppercase tracking-[0.15em] rounded-2xl transition-all ${imageEl&&modelsLoaded&&!analyzing?"bg-white text-black hover:scale-[1.01]":"bg-white/[0.03] text-white/12 cursor-not-allowed"}`}>
-            {analyzing?"Analyse en cours...":"Lancer l'analyse PSL"}
-          </button>
-          <p className="text-[9px] text-white/10 text-center mt-4">100% local · Aucune photo envoyée · Modèle IA embarqué</p>
+      <nav className="no-print" style={{ position: "fixed", top: 0, left: 0, right: 0, zIndex: 200, padding: "15px 26px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--border)", background: "rgba(10,10,10,.92)", backdropFilter: "blur(24px)" }}>
+        <div style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 19, letterSpacing: 4, color: "var(--orange)" }}>GRAVITY<span style={{ color: "var(--text)" }}>LAB</span></div>
+        <div style={{ display: "flex", gap: 22 }}>
+          {["Programs", "Method", "Guide"].map(l => (
+            <a key={l} href={`#${l.toLowerCase()}`} style={{ fontFamily: "var(--fd)", fontSize: 11, letterSpacing: 2, textTransform: "uppercase", color: "var(--text-faint)", textDecoration: "none", transition: "color .2s" }}
+              onMouseEnter={e => (e.currentTarget.style.color = "var(--text)")}
+              onMouseLeave={e => (e.currentTarget.style.color = "var(--text-faint)")}>{l}</a>
+          ))}
         </div>
-      </main>
-    );
-  }
+      </nav>
 
-  // ─── RESULTS ──────────────────────────────────────────────────────────────
-  if(page==="results"&&results){
-    const band=getBand(results.overall);
-    const potBand=getBand(results.potential);
-    const isFemale=gender==="Femme";
-    const filteredAdvice=advice.filter(a=>!a.femaleOnly||isFemale);
+      {/* ── HERO ─────────────────────────────────────────────── */}
+      <section style={{ minHeight: "100vh", display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", textAlign: "center", padding: "130px 22px 70px", position: "relative", zIndex: 1, overflow: "hidden" }}>
+        <div style={{ position: "absolute", top: "50%", left: "50%", transform: "translate(-50%,-50%)", width: 750, height: 750, background: "radial-gradient(circle,rgba(255,69,0,.08),transparent 60%)", pointerEvents: "none" }} />
+        <div className="badge" style={{ background: "rgba(255,69,0,.1)", color: "var(--orange)", border: "1px solid var(--orange-border)", marginBottom: 28, letterSpacing: 3, fontSize: 10 }}>⚡ Elite Calisthenics Programs — Premium Digital Coaching</div>
+        <h1 className="flicker hero-title" style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: "clamp(68px,13vw,148px)", lineHeight: .87, letterSpacing: "-.02em", textTransform: "uppercase", marginBottom: 28 }}>
+          DOMINATE<br /><span style={{ WebkitTextStroke: "2px var(--orange)", WebkitTextFillColor: "transparent" }}>GRAVITY</span>
+        </h1>
+        <p style={{ fontFamily: "var(--fb)", fontWeight: 300, fontSize: 17, color: "var(--text-dim)", maxWidth: 500, marginBottom: 48, lineHeight: 1.65 }}>Science-backed programs engineered to build elite skills and serious muscle. Planche. Front Lever. Hybrid. Aesthetics.</p>
+        <div style={{ display: "flex", gap: 14, flexWrap: "wrap", justifyContent: "center" }}>
+          <a href="#programs"><button className="btn-primary pulse-glow" style={{ fontSize: 15, padding: "15px 42px", letterSpacing: 3 }}>View Programs <ChevronDown size={13} /></button></a>
+          <a href="#guide"><button className="btn-secondary">Selection Guide</button></a>
+        </div>
+      </section>
 
-    // ── PAYWALL (no offer selected) ───────────────────────────────────────
-    if(!unlockedOffer){
-      return(
-        <main className="min-h-screen bg-[#06060c] text-white relative overflow-hidden" style={{fontFamily:"'Helvetica Neue',Arial,sans-serif"}}>
-          <style>{CSS}</style>
-          <div className="absolute inset-0 bg-[radial-gradient(ellipse_80%_60%_at_50%_0%,rgba(99,102,241,0.10),transparent)]"/>
-          <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.006)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.006)_1px,transparent_1px)] bg-[size:52px_52px]"/>
-
-
-          <div className="absolute inset-0 z-0 flex items-start justify-center pt-10 pointer-events-none select-none" style={{filter:"blur(12px)",opacity:0.3,userSelect:"none"}}>
-            <div className="w-full max-w-sm px-4">
-              <div className="p-6 bg-white/[0.02] border border-white/[0.05] rounded-3xl mb-4 text-center">
-                <PSLGauge score={results.overall} potential={results.potential}/>
-              </div>
-              <div className="mb-4"><DistributionChart score={results.overall} gender={gender||"Homme"}/></div>
-              <div className="grid grid-cols-2 gap-3 mb-4">
-                {[{l:"Score actuel",c:band.color},{l:"Potentiel max",c:potBand.color}].map((x,i)=>(
-                  <div key={i} className="p-4 rounded-2xl border" style={{borderColor:x.c+"20",background:x.c+"07"}}>
-                    <p className="text-[8px] text-white/22 uppercase mb-1">{x.l}</p>
-                    <p className="text-4xl font-black italic" style={{color:x.c}}>?.?</p>
-                  </div>
-                ))}
-              </div>
-              <div className="p-5 bg-white/[0.02] border border-white/[0.04] rounded-3xl space-y-3">
-                {["Symétrie faciale","Tiers faciaux","Jawline","Yeux","Canthal tilt","Lèvres"].map((l,i)=>(
-                  <div key={i} className="space-y-1">
-                    <div className="flex justify-between"><span className="text-[10px] text-white/32">{l}</span><span className="text-[10px] font-black text-white/38">??/100</span></div>
-                    <div className="h-[3px] bg-white/8 rounded-full"><div className="h-full bg-white/18 rounded-full" style={{width:`${28+i*12}%`}}/></div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Offer cards */}
-          <div className="relative z-10 min-h-screen flex flex-col items-center justify-center px-4 py-12">
-            <button onClick={reset} className="absolute top-5 left-5 text-white/25 hover:text-white/55 text-[9px] font-black uppercase tracking-widest transition-colors">← Accueil</button>
-
-            {/* Lock icon + headline */}
-            <div className="text-center mb-8">
-              <div className="w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 border border-indigo-500/30" style={{background:"radial-gradient(circle,rgba(99,102,241,0.28),rgba(99,102,241,0.05))"}}>
-                <svg width="26" height="26" fill="none" stroke="#a5b4fc" strokeWidth="1.8"><rect x="3" y="11" width="18" height="11" rx="2.5"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
-              </div>
-              <p className="text-[11px] font-black text-indigo-400/80 uppercase tracking-[0.2em] mb-1">Ton analyse est prête</p>
-              <h3 className="text-3xl font-black text-white mb-2 tracking-tight">Choisis ton offre</h3>
-              <p className="text-[12px] text-white/40 italic max-w-xs mx-auto leading-relaxed">"La plupart des gens ne savent pas à quoi ils ressemblent vraiment — et perdent des années à ne pas optimiser."</p>
-            </div>
-
-            {/* ── Two offer cards ── */}
-            <div className="w-full max-w-sm flex flex-col gap-4">
-
-              {/* OFFER 1 — 2.99€ : Score + position */}
-              <div className="relative bg-[#0c0c18]/95 border border-white/[0.12] rounded-3xl p-6 backdrop-blur-2xl overflow-hidden">
-                {/* Shimmer line top */}
-                <div className="absolute top-0 left-0 right-0 h-[2px] rounded-full" style={{background:"linear-gradient(90deg,transparent,rgba(99,102,241,0.5),transparent)"}}/>
-                <div className="flex items-start justify-between mb-4">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-[10px] font-black text-white/45 uppercase tracking-widest">Offre Découverte</span>
-                    </div>
-                    <div className="flex items-end gap-2">
-                      <span className="text-4xl font-black text-white tracking-tighter">2.99€</span>
-                      <span className="text-white/25 text-sm line-through mb-1">4.99€</span>
-                      <span className="px-2 py-0.5 bg-emerald-500/15 text-emerald-400 text-[8px] font-black rounded-full border border-emerald-500/25 mb-1">-40%</span>
-                    </div>
-                  </div>
-                  <div className="text-2xl mt-1">📊</div>
-                </div>
-
-                <div className="space-y-2 mb-5">
-                  {[
-                    {icon:"📊",t:"Ton score PSL sur l'échelle",included:true},
-                    {icon:"📈",t:"Ta position dans la population",included:true},
-                    {icon:"🎯",t:`${filteredAdvice.length} conseils personnalisés`,included:false},
-                    {icon:"💎",t:"Ton potentiel max personnalisé",included:false},
-                  ].map((item,i)=>(
-                    <div key={i} className={`flex items-center gap-2.5 ${item.included?"opacity-100":"opacity-35"}`}>
-                      <span className={`text-sm flex-shrink-0 ${!item.included?"grayscale":""}`}>{item.icon}</span>
-                      <span className={`text-[11px] font-bold ${item.included?"text-white/70":"text-white/30 line-through"}`}>{item.t}</span>
-                      {!item.included&&<span className="ml-auto text-[8px] text-white/20 italic flex-shrink-0">🔒 non inclus</span>}
-                    </div>
-                  ))}
-                </div>
-
-                {/* Upsell note */}
-                <div className="mb-4 p-2.5 bg-indigo-500/8 border border-indigo-500/15 rounded-xl">
-                  <p className="text-[10px] text-indigo-300/70 leading-relaxed">
-                    Option : débloquer conseils + potentiel pour <span className="font-black text-indigo-300">+2.00€</span> après paiement
-                  </p>
-                </div>
-
-                <button onClick={()=>handlePay("basic")} className="w-full py-4 font-black text-[11px] uppercase tracking-[0.12em] rounded-xl transition-all hover:scale-[1.02] active:scale-[0.99]" style={{background:"linear-gradient(135deg,#4f46e5,#7c3aed)",boxShadow:"0 0 30px rgba(99,102,241,0.3)"}}>
-                  🔓 Débloquer — 2.99€
-                </button>
-              </div>
-
-              {/* OFFER 2 — 4.99€ : Tout inclus */}
-              <div className="relative bg-[#0c0c18]/95 border-2 border-indigo-500/40 rounded-3xl p-6 backdrop-blur-2xl overflow-hidden">
-                {/* Best value badge */}
-                <div className="absolute -top-[1px] left-1/2 -translate-x-1/2">
-                  <div className="px-4 py-1 text-[9px] font-black uppercase tracking-widest rounded-b-xl" style={{background:"linear-gradient(135deg,#6366f1,#a855f7)",color:"white"}}>
-                    ⭐ Meilleure valeur
-                  </div>
-                </div>
-                {/* Glow */}
-                <div className="absolute inset-0 rounded-3xl pointer-events-none" style={{background:"radial-gradient(ellipse 80% 50% at 50% -10%,rgba(99,102,241,0.12),transparent)"}}/>
-
-                <div className="flex items-start justify-between mb-4 mt-3">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">Offre Complète</span>
-                    </div>
-                    <div className="flex items-end gap-2">
-                      <span className="text-4xl font-black text-white tracking-tighter">4.99€</span>
-                      <span className="text-white/25 text-sm line-through mb-1">9.99€</span>
-                      <span className="px-2 py-0.5 bg-red-500/15 text-red-400 text-[8px] font-black rounded-full border border-red-500/22 mb-1">-50%</span>
-                    </div>
-                  </div>
-                  <div className="text-2xl mt-1">💎</div>
-                </div>
-
-                <div className="space-y-2 mb-5">
-                  {[
-                    {icon:"📊",t:"Ton score PSL sur l'échelle"},
-                    {icon:"📈",t:"Ta position dans la population"},
-                    {icon:"💎",t:"Ton potentiel max personnalisé"},
-                    {icon:"🎯",t:`${filteredAdvice.length} conseils classés par impact`},
-                    {icon:"⏱️",t:"Résultats visibles dès 72h"},
-                  ].map((item,i)=>(
-                    <div key={i} className="flex items-center gap-2.5">
-                      <span className="text-sm flex-shrink-0">{item.icon}</span>
-                      <span className="text-[11px] font-bold text-white/70">{item.t}</span>
-                      <span className="ml-auto text-emerald-400 text-[10px] font-black flex-shrink-0">✓</span>
-                    </div>
-                  ))}
-                </div>
-
-                <button onClick={()=>handlePay("premium")} className="w-full py-4 font-black text-[12px] uppercase tracking-[0.12em] rounded-xl transition-all hover:scale-[1.02] active:scale-[0.99]" style={{background:"linear-gradient(135deg,#6366f1,#a855f7)",boxShadow:"0 0 50px rgba(99,102,241,0.45)"}}>
-                  ⚡ Tout débloquer — 4.99€
-                </button>
-              </div>
-
-              <p className="text-[9px] text-white/15 text-center mt-1">Accès immédiat · Paiement sécurisé Stripe · Paiement unique</p>
-            </div>
-          </div>
-        </main>
-      );
-    }
-
-    // ── RESULTS UNLOCKED ─────────────────────────────────────────────────────
-    const showPotentialAndAdvice = unlockedOffer==="premium" || (unlockedOffer==="basic"&&unlockedUpsell);
-
-    return(
-      <main className="min-h-screen bg-[#06060c] text-white flex flex-col items-center py-12 px-4 relative overflow-hidden" style={{fontFamily:"'Helvetica Neue',Arial,sans-serif"}}>
-        <style>{CSS}</style>
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_60%_40%_at_50%_0%,rgba(99,102,241,0.09),transparent)]"/>
-
-
-        <div className="relative z-10 w-full max-w-sm">
-          <div className="flex items-center justify-between mb-10">
-            <button onClick={reset} className="text-white/20 hover:text-white/50 text-[10px] font-black uppercase tracking-[0.15em] transition-colors">← Accueil</button>
-            <span className="text-[9px] text-white/15 font-bold uppercase tracking-wider">{gender} · {age} ans</span>
-          </div>
-
-          {/* Gauge */}
-          <div className="p-7 bg-white/[0.02] border border-white/[0.05] rounded-3xl mb-4 text-center">
-            <PSLGauge score={results.overall} potential={showPotentialAndAdvice?results.potential:results.overall}/>
-            <div className="flex items-center justify-center gap-5 mt-3">
-              <div className="flex items-center gap-1.5"><div className="w-5 h-[2px] bg-white rounded-full"/><span className="text-[8px] text-white/22 font-bold uppercase tracking-wider">Score actuel</span></div>
-              {showPotentialAndAdvice&&results.potential>results.overall&&<div className="flex items-center gap-1.5"><div className="w-5 border-t border-dashed border-white/18"/><span className="text-[8px] text-white/22 font-bold uppercase tracking-wider">Potentiel</span></div>}
-            </div>
-          </div>
-
-          {/* Distribution */}
-          <div className="mb-4"><DistributionChart score={results.overall} gender={gender||"Homme"}/></div>
-
-          {/* Score cards */}
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <div className="p-4 rounded-2xl border" style={{borderColor:band.color+"22",background:band.color+"06"}}>
-              <p className="text-[8px] font-bold text-white/22 uppercase tracking-wider mb-1">Score actuel</p>
-              <p className="text-3xl font-black italic" style={{color:band.color}}>{results.overall.toFixed(1)}</p>
-              <p className="text-[9px] font-black mt-0.5" style={{color:band.color}}>{band.label}</p>
-              <p className="text-[7px] text-white/18 mt-0.5">{band.topPercent}</p>
-            </div>
-            {/* Potential card — blurred if not unlocked */}
-            <div className={`p-4 rounded-2xl border relative overflow-hidden ${!showPotentialAndAdvice?"cursor-pointer":""}`} style={{borderColor:potBand.color+"22",background:potBand.color+"06"}} onClick={()=>{if(!showPotentialAndAdvice)handlePay("upsell");}}>
-              {!showPotentialAndAdvice&&(
-                <>
-                  <div className="absolute inset-0 backdrop-blur-md bg-black/30 flex flex-col items-center justify-center gap-1 z-10">
-                    <span className="text-xl">🔒</span>
-                    <span className="text-[9px] font-black text-white/60 uppercase tracking-widest text-center leading-snug">Débloquer<br/>+2.00€</span>
-                  </div>
-                  <div className="opacity-0">
-                    <p className="text-[8px] font-bold text-white/22 uppercase tracking-wider mb-1">Potentiel max</p>
-                    <p className="text-3xl font-black italic" style={{color:potBand.color}}>{results.potential.toFixed(1)}</p>
-                  </div>
-                </>
-              )}
-              {showPotentialAndAdvice&&(
-                <>
-                  <p className="text-[8px] font-bold text-white/22 uppercase tracking-wider mb-1">Potentiel max</p>
-                  <p className="text-3xl font-black italic" style={{color:potBand.color}}>{results.potential.toFixed(1)}</p>
-                  <p className="text-[9px] font-black mt-0.5" style={{color:potBand.color}}>{potBand.label}</p>
-                  <p className="text-[7px] text-white/18 mt-0.5">Atteignable</p>
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Upsell banner (basic offer, not yet paid upsell) */}
-          {unlockedOffer==="basic"&&!unlockedUpsell&&(
-            <div className="mb-4 p-4 rounded-2xl border border-indigo-500/30 bg-indigo-500/6 cursor-pointer hover:border-indigo-500/50 transition-all" onClick={()=>handlePay("upsell")}>
-              <div className="flex items-center gap-3">
-                <span className="text-2xl">🎯</span>
-                <div className="flex-1">
-                  <p className="text-[12px] font-black text-white/80 mb-0.5">Débloquer ton potentiel + conseils</p>
-                  <p className="text-[10px] text-white/40 leading-relaxed">{filteredAdvice.length} conseils classés par impact · Potentiel max personnalisé</p>
-                </div>
-                <div className="flex-shrink-0 text-right">
-                  <p className="text-xl font-black text-indigo-400">+2€</p>
-                  <p className="text-[8px] text-white/25">paiement unique</p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Summary */}
-          <div className="p-4 rounded-2xl bg-white/[0.02] border border-white/[0.04] mb-5">
-            <p className="text-[12px] text-white/48 leading-relaxed">
-              Tu es <span className="font-black text-white">{results.overall.toFixed(1)}/10</span> ({band.label} · {band.topPercent} des {isFemale?"femmes":"hommes"}).{" "}
-              {showPotentialAndAdvice&&results.potential>results.overall?<>Potentiel : <span className="font-black" style={{color:potBand.color}}>{results.potential.toFixed(1)}</span> ({potBand.label}). Premiers résultats en <span className="font-black text-white">72h</span>.</>:"Applique les conseils ci-dessous pour progresser."}
-            </p>
-          </div>
-
-          {/* Tabs */}
-          <div className="flex gap-1 p-1 bg-white/[0.02] border border-white/[0.04] rounded-2xl mb-4">
-            {(["scores","potential","advice"] as const).map(tab=>(
-              <button key={tab} onClick={()=>setActiveTab(tab)} className={`flex-1 py-2.5 rounded-xl font-black text-[9px] uppercase tracking-wider transition-all relative ${activeTab===tab?"bg-white text-black":"text-white/22 hover:text-white/45"}`}>
-                {tab==="scores"?"Scores":tab==="potential"?"Potentiel":`Conseils (${filteredAdvice.length})`}
-                {!showPotentialAndAdvice&&(tab==="potential"||tab==="advice")&&<span className="absolute -top-1 -right-1 text-[8px]">🔒</span>}
-              </button>
-            ))}
-          </div>
-
-          {activeTab==="scores"&&(
-            <div className="p-5 bg-white/[0.02] border border-white/[0.04] rounded-3xl space-y-4 mb-4">
-              <h3 className="text-[9px] font-black text-white/20 uppercase tracking-widest">Critères biométriques</h3>
-              <ScoreBar label="Symétrie faciale" value={results.symmetry} color="#a78bfa"/>
-              <ScoreBar label="Tiers faciaux" value={results.facialThirds} color="#818cf8"/>
-              <ScoreBar label="Jawline" value={results.jawlineScore} color="#06b6d4"/>
-              <ScoreBar label="Yeux" value={results.eyeScore} color="#22d3ee"/>
-              <ScoreBar label="Canthal tilt" value={results.canthalTilt} color="#34d399"/>
-              <ScoreBar label="Lèvres" value={results.lipScore} color="#f472b6"/>
-              <ScoreBar label="Qualité détection" value={results.skinScore} color="#fbbf24"/>
-              <div className="pt-4 border-t border-white/[0.04]">
-                <p className="text-[8px] font-black text-white/14 uppercase tracking-widest mb-3">Référence Échelle PSL</p>
-                {PSL_BANDS.map((b,i)=>(
-                  <div key={i} className={`flex items-center gap-2 px-3 py-1.5 rounded-xl ${results.overall>=b.min&&results.overall<=b.max?"bg-white/6":""}`}>
-                    <span className="text-base">{b.emoji}</span>
-                    <span className="text-[9px] font-black w-16" style={{color:b.color}}>{b.min}–{b.max===10?"10":b.max}</span>
-                    <span className="text-[9px] text-white/28 font-bold flex-1">{b.label}</span>
-                    <span className="text-[7px] text-white/16">{b.topPercent}</span>
-                    {results.overall>=b.min&&results.overall<=b.max&&<span className="text-[8px] font-black text-white/32">← toi</span>}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {activeTab==="potential"&&(
-            !showPotentialAndAdvice?(
-              <div className="p-6 bg-white/[0.02] border border-white/[0.04] rounded-3xl mb-4 text-center">
-                <div className="text-4xl mb-3">🔒</div>
-                <p className="text-[14px] font-black text-white/60 mb-2">Potentiel verrouillé</p>
-                <p className="text-[11px] text-white/35 mb-5 leading-relaxed">Découvre jusqu'où tu peux aller et les gains par critère avec les bons efforts.</p>
-                <button onClick={()=>handlePay("upsell")} className="w-full py-4 font-black text-[11px] uppercase tracking-[0.12em] rounded-xl transition-all hover:scale-[1.02]" style={{background:"linear-gradient(135deg,#6366f1,#8b5cf6)",boxShadow:"0 0 30px rgba(99,102,241,0.3)"}}>
-                  🔓 Débloquer pour 2.00€
-                </button>
-              </div>
-            ):(
-              <div className="p-5 bg-white/[0.02] border border-white/[0.04] rounded-3xl space-y-5 mb-4">
-                <h3 className="text-[9px] font-black text-white/20 uppercase tracking-widest">Progression par critère</h3>
+      {/* ── MANIFESTO ─────────────────────────────────────────── */}
+      <section id="method" style={{ padding: "90px 22px", position: "relative", zIndex: 1, borderTop: "1px solid var(--border)" }}>
+        <div style={{ maxWidth: 1100, margin: "0 auto" }}>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 72, alignItems: "center" }} className="pg2">
+            <div>
+              <div className="badge" style={{ background: "rgba(255,69,0,.08)", color: "var(--orange)", border: "1px solid var(--orange-border)", marginBottom: 22, letterSpacing: 2, fontSize: 9 }}>⚠️ THE HARD TRUTH</div>
+              <h2 style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: "clamp(32px,4.5vw,58px)", textTransform: "uppercase", lineHeight: .92, marginBottom: 28 }}>
+                TikTok won't<br /><span style={{ WebkitTextStroke: "2px var(--orange)", WebkitTextFillColor: "transparent" }}>build your</span><br />body.
+              </h2>
+              <p style={{ fontFamily: "var(--fb)", fontSize: 15, color: "var(--text-dim)", lineHeight: 1.75, marginBottom: 20 }}>
+                You spend hours scrolling physiques on TikTok. You watch "30 push-up challenge" videos. You try random exercises without understanding why, in what order, or how long to rest.
+              </p>
+              <p style={{ fontFamily: "var(--fb)", fontSize: 15, color: "var(--text-dim)", lineHeight: 1.75, marginBottom: 32 }}>
+                <strong style={{ color: "var(--text)" }}>The result:</strong> you get injured, you plateau, you quit. That's not a lack of willpower — it's a lack of method.
+              </p>
+              <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
                 {[
-                  {label:"Symétrie",current:results.symmetry,gain:8,note:"Mewing + posture"},
-                  {label:"Tiers faciaux",current:results.facialThirds,gain:12,note:"Mewing long terme"},
-                  {label:"Jawline",current:results.jawlineScore,gain:20,note:"BF% + chewing + mewing"},
-                  {label:"Yeux",current:results.eyeScore,gain:5,note:"Peu améliorable (génétique)"},
-                  {label:"Canthal tilt",current:results.canthalTilt,gain:isFemale?8:5,note:isFemale?"Fox eye makeup":"Peu améliorable"},
-                  {label:"Lèvres",current:results.lipScore,gain:15,note:"Hydratation + soin"},
-                ].map((item,i)=>{
-                  const maxVal=Math.min(item.current+item.gain,100);
-                  return(
-                    <div key={i} className="space-y-1.5">
-                      <div className="flex justify-between">
-                        <span className="text-[10px] font-bold text-white/35 uppercase tracking-wider">{item.label}</span>
-                        <span className="text-[9px]"><span className="text-white font-black">{item.current}</span><span className="text-white/18 mx-1">→</span><span className="font-black" style={{color:"#a5b4fc"}}>{maxVal}</span></span>
-                      </div>
-                      <div className="h-2 bg-white/[0.03] rounded-full overflow-hidden relative">
-                        <div className="h-full rounded-full absolute" style={{width:`${maxVal}%`,background:"#6366f115"}}/>
-                        <div className="h-full rounded-full bg-white/65 absolute" style={{width:`${item.current}%`}}/>
-                      </div>
-                      <p className="text-[8px] text-white/16 italic">{item.note}</p>
+                  ["❌", "Copying an exercise without knowing its prerequisites"],
+                  ["❌", "Training 7 days a week without understanding recovery"],
+                  ["❌", "Skipping warm-ups — the fastest route to injury"],
+                  ["❌", "Skipping intermediate progressions and jumping ahead"],
+                  ["❌", "Ignoring rest times between sets"],
+                ].map(([icon, text], i) => (
+                  <div key={i} style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+                    <span style={{ fontSize: 14, flexShrink: 0, marginTop: 2 }}>{icon}</span>
+                    <span style={{ fontFamily: "var(--fb)", fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>{text}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div style={{ background: "linear-gradient(135deg, rgba(255,69,0,0.06), rgba(255,69,0,0.02))", border: "1px solid var(--orange-border)", borderRadius: 12, padding: "32px 30px" }}>
+                <div style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: 13, letterSpacing: 3, color: "var(--orange)", marginBottom: 20, textTransform: "uppercase" }}>✅ What you actually need</div>
+                {[
+                  { icon: "🗓️", title: "A structured multi-week plan", desc: "Every session is designed to prepare the next. No improvisation, no guesswork." },
+                  { icon: "🔥", title: "A mandatory specific warm-up", desc: "Joints, tendons, nervous system — properly prepare your body before every effort." },
+                  { icon: "⏱️", title: "Precise rest times between sets", desc: "Too short = accumulated fatigue. Too long = lost adaptation. Every second matters." },
+                  { icon: "📈", title: "Progressive intermediate exercises", desc: "A full planche doesn't appear from nowhere. There are 6 progressions before it. Each one matters." },
+                  { icon: "🛑", title: "Knowing when NOT to train", desc: "Rest days are adaptation days. Remove rest, you remove gains. Simple as that." },
+                  { icon: "🧠", title: "Understanding the why, not just the what", desc: "Every exercise has biomechanical logic. Understand it and you multiply your results." },
+                ].map((item, i) => (
+                  <div key={i} style={{ display: "flex", gap: 14, marginBottom: i < 5 ? 20 : 0, paddingBottom: i < 5 ? 20 : 0, borderBottom: i < 5 ? "1px solid rgba(255,255,255,.06)" : "none" }}>
+                    <span style={{ fontSize: 20, flexShrink: 0, width: 32, textAlign: "center" }}>{item.icon}</span>
+                    <div>
+                      <div style={{ fontFamily: "var(--fd)", fontWeight: 700, fontSize: 14, color: "var(--text)", marginBottom: 4 }}>{item.title}</div>
+                      <p style={{ fontFamily: "var(--fb)", fontSize: 12, color: "rgba(255,255,255,0.45)", lineHeight: 1.5 }}>{item.desc}</p>
                     </div>
-                  );
-                })}
+                  </div>
+                ))}
               </div>
-            )
-          )}
-
-          {activeTab==="advice"&&(
-            !showPotentialAndAdvice?(
-              <div className="p-6 bg-white/[0.02] border border-white/[0.04] rounded-3xl mb-4 text-center">
-                <div className="text-4xl mb-3">🎯</div>
-                <p className="text-[14px] font-black text-white/60 mb-2">Conseils verrouillés</p>
-                <p className="text-[11px] text-white/35 mb-5 leading-relaxed">{filteredAdvice.length} conseils personnalisés classés par impact, avec gains attendus et délais concrets.</p>
-                <button onClick={()=>handlePay("upsell")} className="w-full py-4 font-black text-[11px] uppercase tracking-[0.12em] rounded-xl transition-all hover:scale-[1.02]" style={{background:"linear-gradient(135deg,#6366f1,#8b5cf6)",boxShadow:"0 0 30px rgba(99,102,241,0.3)"}}>
-                  🔓 Débloquer pour 2.00€
-                </button>
-              </div>
-            ):(
-              <div className="space-y-2 mb-4">
-                <p className="text-[8px] text-white/16 uppercase tracking-widest font-black">{filteredAdvice.length} conseils · impact décroissant</p>
-                {filteredAdvice.map((a,i)=>{
-                  const links=AMAZON_LINKS[a.category]||[];
-                  const isOpen=expandedAdvice===i;
-                  return(
-                    <div key={i} className="bg-white/[0.02] border border-white/[0.04] rounded-2xl overflow-hidden hover:border-white/[0.07] transition-all">
-                      <button className="w-full p-4 text-left flex items-start gap-3" onClick={()=>setExpandedAdvice(isOpen?null:i)}>
-                        <span className="text-lg flex-shrink-0 mt-0.5">{a.icon}</span>
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5 mb-1 flex-wrap"><PriorityBadge p={a.priority}/><DiffBadge d={a.difficulty}/></div>
-                          <p className="text-[12px] font-black text-white/72 leading-snug mb-1">{a.title}</p>
-                          <div className="flex gap-2 flex-wrap">
-                            <span className="text-[8px] font-black text-indigo-400">{a.scoreGain}</span>
-                            <span className="text-[7px] text-white/16">·</span>
-                            <span className="text-[8px] text-white/22">⏱ {a.timeline}</span>
-                          </div>
-                        </div>
-                        {/* Arrow indicator instead of + / × */}
-                        <span className="flex-shrink-0 mt-1 text-white/30 transition-transform duration-300" style={{transform:isOpen?"rotate(180deg)":"rotate(0deg)"}}>
-                          <svg width="18" height="18" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7"/></svg>
-                        </span>
-                      </button>
-                      {isOpen&&(
-                        <div className="px-4 pb-4 border-t border-white/[0.03] pt-3">
-                          <p className="text-[11px] text-white/38 leading-relaxed whitespace-pre-line mb-4">{a.description}</p>
-                          {links.length>0&&(
-                            <div className="space-y-1">
-                              <p className="text-[8px] font-black text-white/20 uppercase tracking-widest mb-2">🛒 Produits recommandés</p>
-                              {links.map((lk,j)=>(
-                                <a key={j} href={lk.url} target="_blank" rel="noopener noreferrer"
-                                  className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-white/[0.06] bg-white/[0.02] hover:bg-white/[0.05] hover:border-indigo-500/30 transition-all group">
-                                  <span className="text-[10px] text-white/50 group-hover:text-white/75 font-semibold transition-colors">{lk.label}</span>
-                                  <span className="text-[8px] text-indigo-400/70 font-black flex-shrink-0 flex items-center gap-1">Amazon <svg width="10" height="10" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg></span>
-                                </a>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )
-          )}
-
-          <div className="mt-4 space-y-3">
-            <button onClick={()=>setPage("analysis")} className="w-full py-4 bg-white text-black font-black text-[10px] uppercase tracking-[0.15em] rounded-2xl hover:scale-[1.01] transition-all">Nouvelle analyse</button>
-            <button onClick={()=>{navigator.clipboard.writeText(`Mon score PSL : ${results.overall.toFixed(1)}/10 (${band.label}) — via PSLScore`);alert("✓ Copié !");}} className="w-full py-4 bg-white/[0.025] text-white/22 font-black text-[10px] uppercase tracking-[0.15em] rounded-2xl hover:bg-white/[0.05] transition-all border border-white/[0.04]">Partager mon score</button>
+            </div>
           </div>
-          <p className="text-[8px] text-white/7 text-center mt-6">Analyse biométrique · Résultats indicatifs · Pas un jugement de valeur</p>
         </div>
-      </main>
-    );
-  }
+      </section>
 
-  return null;
+      {/* ── QUIZ ──────────────────────────────────────────────── */}
+      <QuizSection onOpen={openProg} />
+
+      {/* ── PROGRAMS ──────────────────────────────────────────── */}
+      <section id="programs" style={{ padding: "60px 22px 20px", position: "relative", zIndex: 1 }}>
+        <div style={{ maxWidth: 1260, margin: "0 auto" }}>
+          <div style={{ textAlign: "center", marginBottom: 56 }}>
+            <div className="badge" style={{ background: "var(--orange-dim)", color: "var(--orange)", border: "1px solid var(--orange-border)", marginBottom: 14 }}>PROGRAMS</div>
+            <h2 style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: "clamp(34px,5vw,66px)", textTransform: "uppercase" }}>CHOOSE YOUR PATH</h2>
+          </div>
+          <CatSection label="STRENGTH & SKILLS" sublabel="Master gravity — Planche & Front Lever from beginner to elite" progs={skillProgs} onOpen={openProg} />
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 28, marginBottom: 64 }} className="pg2">
+            <CatSection label="HYBRID" sublabel="Skill + Strength — two tracks" progs={hybridProgs} onOpen={openProg} />
+            <CatSection label="HYPERTROPHY" sublabel="Aesthetic physique focus" progs={hypertrophyProgs} onOpen={openProg} />
+          </div>
+        </div>
+      </section>
+
+      {/* ── BUNDLE SECTION WITH COUNTDOWN ─────────────────────── */}
+      <BundleSection onOpen={openProg} />
+
+      {/* ── TESTIMONIALS ──────────────────────────────────────── */}
+      <TestimonialsSection />
+
+      {/* ── FAQ ───────────────────────────────────────────────── */}
+      <FAQSection />
+
+      {/* ── SELECTION GUIDE ───────────────────────────────────── */}
+      <section id="guide" style={{ padding: "70px 22px", position: "relative", zIndex: 1 }}>
+        <div style={{ maxWidth: 980, margin: "0 auto" }}>
+          <div style={{ textAlign: "center", marginBottom: 44 }}>
+            <div className="badge" style={{ background: "rgba(255,255,255,.04)", color: "var(--text-dim)", border: "1px solid var(--border-bright)", marginBottom: 14 }}>SELECTION GUIDE</div>
+            <h2 style={{ fontFamily: "var(--fd)", fontWeight: 900, fontSize: "clamp(28px,4.5vw,56px)", textTransform: "uppercase" }}>WHICH PROGRAM IS FOR YOU?</h2>
+          </div>
+          <div className="surface" style={{ borderRadius: 8, overflowX: "auto" }}>
+            <table className="data-table">
+              <thead><tr>{["Program", "Category", "Level", "Prerequisite", "Dual Track", "Price", ""].map(h => <th key={h}>{h}</th>)}</tr></thead>
+              <tbody>
+                {PROGRAMS.map(p => (
+                  <tr key={p.id} style={{ cursor: "pointer" }}
+                    onMouseEnter={e => (e.currentTarget.style.background = "rgba(255,69,0,.04)")}
+                    onMouseLeave={e => (e.currentTarget.style.background = "transparent")}
+                    onClick={() => p.stripeUrl ? window.open(p.stripeUrl, "_blank") : openProg(p)}>
+                    <td style={{ fontWeight: 700, color: "var(--text)" }}>{p.title}</td>
+                    <td><span className="badge" style={{ background: "rgba(255,255,255,.04)", color: "var(--text-dim)", border: "1px solid var(--border)", fontSize: 9 }}>{p.categoryGroup}</span></td>
+                    <td><span className="badge" style={{ background: `${p.levelColor}15`, color: p.levelColor, border: `1px solid ${p.levelColor}28` }}>{p.level}</span></td>
+                    <td style={{ fontSize: 12 }}>{(p as any).prereq ?? "—"}</td>
+                    <td style={{ textAlign: "center" }}>{p.dualTrack ? <span style={{ color: "var(--orange)", fontWeight: 700 }}>✓</span> : <span style={{ color: "var(--text-faint)" }}>—</span>}</td>
+                    <td>
+                      <span style={{ fontFamily: "var(--fd)", fontSize: 18, fontWeight: 900, color: p.category === "bundle" ? "var(--orange)" : "var(--text)" }}>${p.price}</span>
+                      {p.originalPrice && <span style={{ fontFamily: "var(--fb)", fontSize: 11, color: "var(--text-faint)", marginLeft: 6, textDecoration: "line-through" }}>${p.originalPrice}</span>}
+                    </td>
+                    <td onClick={e => e.stopPropagation()}>
+                      {p.stripeUrl && (
+                        <a href={p.stripeUrl} target="_blank" rel="noopener noreferrer">
+                          <button className="btn-primary" style={{ padding: "6px 14px", fontSize: 10, whiteSpace: "nowrap" }}>Buy Now</button>
+                        </a>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <footer className="no-print" style={{ borderTop: "1px solid var(--border)", padding: "24px", textAlign: "center" }}>
+        <p style={{ fontFamily: "var(--fb)", fontSize: 11, color: "var(--text-faint)", letterSpacing: 1 }}>© 2025 GRAVITYLAB — All rights reserved</p>
+      </footer>
+    </div>
+  );
 }
